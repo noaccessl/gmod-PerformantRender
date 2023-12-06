@@ -6,11 +6,6 @@ local VECTOR = _R.Vector
 local ENTITY = _R.Entity
 
 --
---	Meta: ConVar
---
-local ConVarGetBool = _R.ConVar.GetBool
-
---
 --	Meta: Vector
 --
 local VectorDistToSqr = VECTOR.DistToSqr
@@ -20,6 +15,8 @@ local VectorDistToSqr = VECTOR.DistToSqr
 --
 local IsValid = ENTITY.IsValid
 local IsDormant = ENTITY.IsDormant
+
+local IsEFlagSet = ENTITY.IsEFlagSet
 
 local GetTable = ENTITY.GetTable
 local GetPos = ENTITY.GetPos
@@ -76,12 +73,14 @@ end
 --[[---------------------------------------------------------------------------
 	PerformantRender
 ---------------------------------------------------------------------------]]
-local PERFRENDER_STATE = CreateClientConVar( 'r_performant_enable', '1', true, false, 'Enables/Disables performant rendering of props, NPCs, SENTs, etc.', 0, 1 )
-local PERFRENDER_DEBUG = CreateClientConVar( 'r_performant_debug', '0', false, false, 'Enables/Disables performant render debugging.', 0, 1 )
+local PERFRENDER_STATE = CreateClientConVar( 'r_performant_enable', '1', true, false, 'Enables/Disables performant rendering of props, NPCs, SENTs, etc.', 0, 1 ):GetBool()
+local PERFRENDER_DEBUG = CreateClientConVar( 'r_performant_debug', '0', false, false, 'Enables/Disables performant render debugging.', 0, 1 ):GetBool()
 
 cvars.AddChangeCallback( 'r_performant_enable', function( _, _, new )
 
-	if tobool( new ) then
+	PERFRENDER_STATE = tobool( new )
+
+	if PERFRENDER_STATE then
 
 		local tEnts = ents.GetAll()
 		local RegisterPotentialRenderable = hook.GetTable().OnEntityCreated.PerformantRender
@@ -124,13 +123,9 @@ cvars.AddChangeCallback( 'r_performant_enable', function( _, _, new )
 
 end, 'state' )
 
-local function IsPerfRenderEnabled()
-	return ConVarGetBool( PERFRENDER_STATE )
-end
-
-local function IsPerfRenderDebuggingEnabled()
-	return ConVarGetBool( PERFRENDER_DEBUG )
-end
+cvars.AddChangeCallback( 'r_performant_debug', function( _, _, new )
+	PERFRENDER_DEBUG = tobool( new )
+end, 'state' )
 
 
 g_Renderables = g_Renderables or {}
@@ -140,8 +135,6 @@ g_Renderables = g_Renderables or {}
 	PerformantRender: Visibility Calculations
 ---------------------------------------------------------------------------]]
 local AngleGetForward = _R.Angle.Forward
-local IsEFlagSet = ENTITY.IsEFlagSet
-
 
 local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flFOV )
 
@@ -245,13 +238,41 @@ end
 
 hook.Add( 'RenderScene', 'CalculateRenderablesVisibility', function( vecViewOrigin, angViewOrigin, flFOV )
 
-	if not IsPerfRenderEnabled() then
+	if not PERFRENDER_STATE then
 		return
 	end
 
 	CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flFOV )
 
 end )
+
+--[[---------------------------------------------------------------------------
+	Compatibility with RT Cameras
+---------------------------------------------------------------------------]]
+render.RenderView_Internal = render.RenderView_Internal or render.RenderView
+
+function render.RenderView( tView )
+
+	local g_Renderables = g_Renderables
+	local numAmount = #g_Renderables
+
+	if numAmount == 0 then
+		return render.RenderView_Internal( tView )
+	end
+
+	for numIndex = 1, numAmount do
+
+		local pEntity = g_Renderables[numIndex]
+
+		if IsValid( pEntity ) and not IsDormant( pEntity ) and GetNoDraw( pEntity ) then
+			SetNoDraw( pEntity, false )
+		end
+
+	end
+
+	render.RenderView_Internal( tView )
+
+end
 
 
 --[[---------------------------------------------------------------------------
@@ -265,7 +286,7 @@ hook.Add( 'OnEntityCreated', 'PerformantRender', function( EntityNew )
 			return
 		end
 
-		if not GetModelRadius( EntityNew ) then
+		if not GetModelRadius( EntityNew ) or GetNoDraw( EntityNew ) then
 			return
 		end
 
@@ -284,7 +305,7 @@ hook.Add( 'OnEntityCreated', 'PerformantRender', function( EntityNew )
 		end
 
 		EntityNew.m_bVisible = true
-		EntityNew.m_bOutsidePVS = true
+		EntityNew.m_bOutsidePVS = false
 		EntityNew.m_PixVis = util.GetPixelVisibleHandle()
 
 		table.insert( g_Renderables, EntityNew )
@@ -317,7 +338,7 @@ do
 			return
 		end
 
-		if not IsPerfRenderDebuggingEnabled() then
+		if not PERFRENDER_DEBUG then
 			return
 		end
 
