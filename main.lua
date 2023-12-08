@@ -21,7 +21,7 @@ local IsEFlagSet = ENTITY.IsEFlagSet
 local GetTable = ENTITY.GetTable
 local GetPos = ENTITY.GetPos
 local GetModelRadius = ENTITY.GetModelRadius
-local WorldSpaceAABB = ENTITY.WorldSpaceAABB
+local GetRenderBounds = ENTITY.GetRenderBounds
 
 local SetNoDraw = ENTITY.SetNoDraw
 local GetNoDraw = ENTITY.GetNoDraw
@@ -163,13 +163,12 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flF
 		end
 
 		local vecOrigin = GetPos( pEntity )
+		local pEntity_t = GetTable( pEntity )
 
-		local vecMins, vecMaxs = WorldSpaceAABB( pEntity )
-		local numRadiusSquared = VectorDistToSqr( vecMins, vecMaxs )
-
+		local flDiagonalSqr = pEntity_t.m_flDiagonalSqr
 		local flDist = VectorDistToSqr( vecViewOrigin, vecOrigin )
-		local bInDistance = flDist <= numRadiusSquared * 1.5625
 
+		local bInDistance = flDist <= flDiagonalSqr
 		local bInFOV = IsInFOV( vecViewOrigin, vecViewDirection, vecOrigin, flFOV * 0.6 )
 
 		if not bInDistance and not bInFOV then
@@ -183,16 +182,14 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flF
 
 		end
 
-		local pEntity_t = GetTable( pEntity )
-
 		local bVisible = false
 		local bOutsidePVS = false
-
-		local _, flFogEnd = GetFogDistances()
 		local bInFog = false
 
+		local _, flFogEnd = GetFogDistances()
+
 		if flFogEnd > 0 then
-			bInFog = flDist > flFogEnd * flFogEnd + numRadiusSquared * 1.5625
+			bInFog = flDist > flFogEnd * flFogEnd + flDiagonalSqr
 		end
 
 		if bInDistance then
@@ -201,7 +198,7 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flF
 			bVisible = false
 			bOutsidePVS = true
 		elseif pEntity_t.m_PixVis then
-			bVisible = CalculatePixelVisibility( vecOrigin, numRadiusSquared ^ 0.5, pEntity_t.m_PixVis ) > 0
+			bVisible = CalculatePixelVisibility( vecOrigin, pEntity_t.m_flDiagonal, pEntity_t.m_PixVis ) > 0
 		end
 
 		local bNoDraw = GetNoDraw( pEntity )
@@ -278,6 +275,18 @@ end
 --[[---------------------------------------------------------------------------
 	PerformantRender: Setup
 ---------------------------------------------------------------------------]]
+local function CalcDiagonal( pEntity )
+
+	local vecMins, vecMaxs = GetRenderBounds( pEntity )
+	local flDiagonalSqr = VectorDistToSqr( vecMins, vecMaxs )
+
+	local pEntity_t = GetTable( pEntity )
+
+	pEntity_t.m_flDiagonalSqr = flDiagonalSqr * 1.5625
+	pEntity_t.m_flDiagonal = flDiagonalSqr ^ 0.5
+
+end
+
 hook.Add( 'OnEntityCreated', 'PerformantRender', function( EntityNew )
 
 	timer.Simple( 0, function()
@@ -308,6 +317,9 @@ hook.Add( 'OnEntityCreated', 'PerformantRender', function( EntityNew )
 		EntityNew.m_bOutsidePVS = false
 		EntityNew.m_PixVis = util.GetPixelVisibleHandle()
 
+		CalcDiagonal( EntityNew )
+		EntityNew.m_iCallbackCalcDiagonal = EntityNew:AddCallback( 'OnAngleChange', CalcDiagonal )
+
 		table.insert( g_Renderables, EntityNew )
 
 	end )
@@ -326,9 +338,6 @@ do
 	local SetColorMaterial = render.SetColorMaterial
 
 	local GetAngles = ENTITY.GetAngles
-
-	local OBBMins = ENTITY.OBBMins
-	local OBBMaxs = ENTITY.OBBMaxs
 
 	local DrawWireframeBox = render.DrawWireframeBox
 
@@ -366,13 +375,12 @@ do
 			local vecOrigin = GetPos( pEntity )
 			local angOrigin = GetAngles( pEntity )
 
-			local vecOBBMins = OBBMins( pEntity )
-			local vecOBBMaxs = OBBMaxs( pEntity )
+			local vecMins, vecMaxs = GetRenderBounds( pEntity )
 
 			if pEntity.m_bVisible == false then
-				DrawWireframeBox( vecOrigin, angOrigin, vecOBBMins, vecOBBMaxs, colorHidden )
+				DrawWireframeBox( vecOrigin, angOrigin, vecMins, vecMaxs, colorHidden )
 			else
-				DrawWireframeBox( vecOrigin, angOrigin, vecOBBMins, vecOBBMaxs, colorVisible )
+				DrawWireframeBox( vecOrigin, angOrigin, vecMins, vecMaxs, colorVisible )
 			end
 
 		end
