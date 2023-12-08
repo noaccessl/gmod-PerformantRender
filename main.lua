@@ -312,6 +312,12 @@ hook.Add( 'OnEntityCreated', 'PerformantRender', function( EntityNew )
 			return
 		end
 
+		local strClass = EntityNew:GetClass()
+
+		if strClass:sub( 6, 9 ) == 'door' then
+			return
+		end
+
 		EntityNew.m_bRenderable = true
 
 		g_Renderables_Lookup[ EntityNew ] = {
