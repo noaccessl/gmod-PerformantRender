@@ -18,7 +18,6 @@ local IsDormant = ENTITY.IsDormant
 
 local IsEFlagSet = ENTITY.IsEFlagSet
 
-local GetTable = ENTITY.GetTable
 local GetPos = ENTITY.GetPos
 local GetModelRadius = ENTITY.GetModelRadius
 local GetRenderBounds = ENTITY.GetRenderBounds
@@ -89,7 +88,7 @@ cvars.AddChangeCallback( 'r_performant_enable', function( _, _, new )
 
 			local pEntity = tEnts[numIndex]
 
-			if IsValid( pEntity ) and not pEntity.m_PixVis then
+			if IsValid( pEntity ) and not pEntity.m_bRenderable then
 				RegisterPotentialRenderable( pEntity )
 			end
 
@@ -115,8 +114,6 @@ cvars.AddChangeCallback( 'r_performant_enable', function( _, _, new )
 			SetNoDraw( pEntity, false )
 			RemoveEFlags( pEntity, EFL_NO_THINK_FUNCTION )
 
-			pEntity.m_bVisible = true
-
 		end
 
 	end
@@ -129,6 +126,7 @@ end, 'state' )
 
 
 g_Renderables = g_Renderables or {}
+g_Renderables_Lookup = g_Renderables_Lookup or {}
 
 
 --[[---------------------------------------------------------------------------
@@ -145,6 +143,7 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flF
 		return
 	end
 
+	local g_Renderables_Lookup = g_Renderables_Lookup
 	local vecViewDirection = AngleGetForward( angViewOrigin )
 
 	for numIndex = 1, numAmount do
@@ -163,7 +162,7 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flF
 		end
 
 		local vecOrigin = GetPos( pEntity )
-		local pEntity_t = GetTable( pEntity )
+		local pEntity_t = g_Renderables_Lookup[ pEntity ]
 
 		local flDiagonalSqr = pEntity_t.m_flDiagonalSqr
 		local flDist = VectorDistToSqr( vecViewOrigin, vecOrigin )
@@ -280,7 +279,7 @@ local function CalcDiagonal( pEntity )
 	local vecMins, vecMaxs = GetRenderBounds( pEntity )
 	local flDiagonalSqr = VectorDistToSqr( vecMins, vecMaxs )
 
-	local pEntity_t = GetTable( pEntity )
+	local pEntity_t = g_Renderables_Lookup[ pEntity ]
 
 	pEntity_t.m_flDiagonalSqr = flDiagonalSqr * 1.5625
 	pEntity_t.m_flDiagonal = flDiagonalSqr ^ 0.5
@@ -313,9 +312,15 @@ hook.Add( 'OnEntityCreated', 'PerformantRender', function( EntityNew )
 			return
 		end
 
-		EntityNew.m_bVisible = true
-		EntityNew.m_bOutsidePVS = false
-		EntityNew.m_PixVis = util.GetPixelVisibleHandle()
+		EntityNew.m_bRenderable = true
+
+		g_Renderables_Lookup[ EntityNew ] = {
+
+			m_bVisible = true;
+			m_bOutsidePVS = false;
+			m_PixVis = util.GetPixelVisibleHandle()
+
+		}
 
 		CalcDiagonal( EntityNew )
 		EntityNew.m_iCallbackCalcDiagonal = EntityNew:AddCallback( 'OnAngleChange', CalcDiagonal )
@@ -347,7 +352,7 @@ do
 			return
 		end
 
-		if not PERFRENDER_DEBUG then
+		if not ( PERFRENDER_STATE and PERFRENDER_DEBUG ) then
 			return
 		end
 
@@ -358,6 +363,7 @@ do
 			return
 		end
 
+		local g_Renderables_Lookup = g_Renderables_Lookup
 		SetColorMaterial()
 
 		for numIndex = 1, numAmount do
@@ -368,7 +374,13 @@ do
 				continue
 			end
 
-			if IsDormant( pEntity ) or pEntity.m_bOutsidePVS == true then
+			if IsDormant( pEntity ) then
+				continue
+			end
+
+			local pEntity_t = g_Renderables_Lookup[ pEntity ]
+
+			if pEntity_t.m_bOutsidePVS == true then
 				continue
 			end
 
@@ -377,7 +389,7 @@ do
 
 			local vecMins, vecMaxs = GetRenderBounds( pEntity )
 
-			if pEntity.m_bVisible == false then
+			if pEntity_t.m_bVisible == false then
 				DrawWireframeBox( vecOrigin, angOrigin, vecMins, vecMaxs, colorHidden )
 			else
 				DrawWireframeBox( vecOrigin, angOrigin, vecMins, vecMaxs, colorVisible )
