@@ -153,7 +153,9 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flF
 		if not IsValid( pEntity ) then
 
 			table.remove( g_Renderables, numIndex )
-			continue
+			g_Renderables_Lookup[ pEntity ] = nil
+
+			break
 
 		end
 
@@ -168,7 +170,7 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flF
 		local flDist = VectorDistToSqr( vecViewOrigin, vecOrigin )
 
 		local bInDistance = flDist <= flDiagonalSqr
-		local bInFOV = IsInFOV( vecViewOrigin, vecViewDirection, vecOrigin, flFOV * 0.6 )
+		local bInFOV = IsInFOV( vecViewOrigin, vecViewDirection, vecOrigin, flFOV * 0.75 )
 
 		if not bInDistance and not bInFOV then
 
@@ -209,9 +211,9 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flF
 				SetNoDraw( pEntity, false )
 				RemoveEFlags( pEntity, EFL_NO_THINK_FUNCTION )
 
-				pEntity_t.m_bVisible = true
-
 			end
+
+			pEntity_t.m_bVisible = true
 
 		else
 
@@ -220,9 +222,9 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flF
 				SetNoDraw( pEntity, true )
 				AddEFlags( pEntity, EFL_NO_THINK_FUNCTION )
 
-				pEntity_t.m_bVisible = false
-
 			end
+
+			pEntity_t.m_bVisible = false
 
 		end
 
@@ -286,6 +288,29 @@ local function CalcDiagonal( pEntity )
 
 end
 
+ENTITY.SetRenderBounds_Internal = ENTITY.SetRenderBounds_Internal or ENTITY.SetRenderBounds
+ENTITY.SetRenderBoundsWS_Internal = ENTITY.SetRenderBoundsWS_Internal or ENTITY.SetRenderBoundsWS
+
+function ENTITY:SetRenderBounds( vecMins, vecMaxs, vecAdd )
+
+	self:SetRenderBounds_Internal( vecMins, vecMaxs, vecAdd )
+
+	if self.m_bRenderable then
+		CalcDiagonal( self )
+	end
+
+end
+
+function ENTITY:SetRenderBoundsWS( vecMins, vecMaxs, vecAdd )
+
+	self:SetRenderBoundsWS_Internal( vecMins, vecMaxs, vecAdd )
+
+	if self.m_bRenderable then
+		CalcDiagonal( self )
+	end
+
+end
+
 hook.Add( 'OnEntityCreated', 'PerformantRender', function( EntityNew )
 
 	timer.Simple( 0, function()
@@ -329,7 +354,6 @@ hook.Add( 'OnEntityCreated', 'PerformantRender', function( EntityNew )
 		}
 
 		CalcDiagonal( EntityNew )
-		EntityNew.m_iCallbackCalcDiagonal = EntityNew:AddCallback( 'OnAngleChange', CalcDiagonal )
 
 		table.insert( g_Renderables, EntityNew )
 
