@@ -73,7 +73,7 @@ end
 	PerformantRender
 ---------------------------------------------------------------------------]]
 local PERFRENDER_STATE = CreateClientConVar( 'r_performant_enable', '1', true, false, 'Enables/Disables performant rendering of props, NPCs, SENTs, etc.', 0, 1 ):GetBool()
-local PERFRENDER_DEBUG = CreateClientConVar( 'r_performant_debug', '0', false, false, 'Enables/Disables performant render debugging.', 0, 1 ):GetBool()
+local PERFRENDER_DEBUG = CreateConVar( 'r_performant_debug', '0', FCVAR_CHEAT, 'Enables/Disables performant render debugging.', 0, 1 ):GetBool()
 
 cvars.AddChangeCallback( 'r_performant_enable', function( _, _, new )
 
@@ -234,13 +234,38 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flF
 
 end
 
+local VECTOR_VIEW_ORIGIN
+local ANGLE_VIEW_ORIIGN
+local FOV_VIEW
+local MySelf = NULL
+
 hook.Add( 'RenderScene', 'CalculateRenderablesVisibility', function( vecViewOrigin, angViewOrigin, flFOV )
+
+	if not IsValid( MySelf ) then
+		MySelf = LocalPlayer()
+	end
+
+	VECTOR_VIEW_ORIGIN = vecViewOrigin
+	ANGLE_VIEW_ORIIGN = angViewOrigin
+	FOV_VIEW = flFOV
+
+end )
+
+hook.Add( 'PreRender', 'CalculateRenderablesVisibility', function()
 
 	if not PERFRENDER_STATE then
 		return
 	end
 
-	CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flFOV )
+	if MySelf.tardis then
+		return
+	end
+
+	if not VECTOR_VIEW_ORIGIN then
+		return
+	end
+
+	CalculateRenderablesVisibility( VECTOR_VIEW_ORIGIN, ANGLE_VIEW_ORIIGN, FOV_VIEW )
 
 end )
 
@@ -376,13 +401,15 @@ do
 
 	local DrawWireframeBox = render.DrawWireframeBox
 
+	local sv_cheats = GetConVar( 'sv_cheats' )
+
 	hook.Add( 'PostDrawTranslucentRenderables', 'DebugRenderablesVisibility', function( _, _, bSky )
 
 		if bSky then
 			return
 		end
 
-		if not ( PERFRENDER_STATE and PERFRENDER_DEBUG ) then
+		if not ( PERFRENDER_STATE and PERFRENDER_DEBUG and sv_cheats:GetBool() ) then
 			return
 		end
 
