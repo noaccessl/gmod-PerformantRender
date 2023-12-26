@@ -235,7 +235,7 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flF
 end
 
 local VECTOR_VIEW_ORIGIN
-local ANGLE_VIEW_ORIIGN
+local ANGLE_VIEW_ORIGIN
 local FOV_VIEW
 local MySelf = NULL
 
@@ -246,7 +246,7 @@ hook.Add( 'RenderScene', 'CalculateRenderablesVisibility', function( vecViewOrig
 	end
 
 	VECTOR_VIEW_ORIGIN = vecViewOrigin
-	ANGLE_VIEW_ORIIGN = angViewOrigin
+	ANGLE_VIEW_ORIGIN = angViewOrigin
 	FOV_VIEW = flFOV
 
 end )
@@ -265,7 +265,7 @@ hook.Add( 'PreRender', 'CalculateRenderablesVisibility', function()
 		return
 	end
 
-	CalculateRenderablesVisibility( VECTOR_VIEW_ORIGIN, ANGLE_VIEW_ORIIGN, FOV_VIEW )
+	CalculateRenderablesVisibility( VECTOR_VIEW_ORIGIN, ANGLE_VIEW_ORIGIN, FOV_VIEW )
 
 end )
 
