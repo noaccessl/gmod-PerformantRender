@@ -43,10 +43,6 @@ local IsInFOV
 
 do
 
-	local MathAbs = math.abs
-	local RAD2DEG = 180 / math.pi
-	local MathAcos = math.acos
-
 	local VectorCopy = VECTOR.Set
 	local VectorSub = VECTOR.Sub
 	local VectorNormalize = VECTOR.Normalize
@@ -54,13 +50,13 @@ do
 
 	local diff = Vector()
 
-	function IsInFOV( vecViewOrigin, vecViewDirection, vecPoint, flFOV )
+	function IsInFOV( vecViewOrigin, vecViewDirection, vecPoint, flFOVCosine )
 
 		VectorCopy( diff, vecPoint )
 		VectorSub( diff, vecViewOrigin )
 		VectorNormalize( diff )
 
-		return MathAbs( RAD2DEG * ( MathAcos( VectorDot( vecViewDirection, diff ) ) ) ) < flFOV
+		return VectorDot( vecViewDirection, diff ) > flFOVCosine
 
 	end
 
@@ -134,6 +130,9 @@ g_Renderables_Lookup = g_Renderables_Lookup or {}
 ---------------------------------------------------------------------------]]
 local AngleGetForward = _R.Angle.Forward
 
+local MathCos = math.cos
+local DEG2RAD = math.pi / 180
+
 local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flFOV )
 
 	local g_Renderables = g_Renderables
@@ -144,7 +143,9 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flF
 	end
 
 	local g_Renderables_Lookup = g_Renderables_Lookup
+
 	local vecViewDirection = AngleGetForward( angViewOrigin )
+	local flFOVCosine = MathCos( DEG2RAD * ( flFOV * 0.75 ) )
 
 	for numIndex = 1, numAmount do
 
@@ -170,7 +171,7 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flF
 		local flDist = VectorDistToSqr( vecViewOrigin, vecOrigin )
 
 		local bInDistance = flDist <= flDiagonalSqr
-		local bInFOV = IsInFOV( vecViewOrigin, vecViewDirection, vecOrigin, flFOV * 0.75 )
+		local bInFOV = IsInFOV( vecViewOrigin, vecViewDirection, vecOrigin, flFOVCosine )
 
 		if not bInDistance and not bInFOV then
 
@@ -235,7 +236,7 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flF
 end
 
 local VECTOR_VIEW_ORIGIN
-local ANGLE_VIEW_ORIIGN
+local ANGLE_VIEW_ORIGIN
 local FOV_VIEW
 local MySelf = NULL
 
@@ -246,7 +247,7 @@ hook.Add( 'RenderScene', 'CalculateRenderablesVisibility', function( vecViewOrig
 	end
 
 	VECTOR_VIEW_ORIGIN = vecViewOrigin
-	ANGLE_VIEW_ORIIGN = angViewOrigin
+	ANGLE_VIEW_ORIGIN = angViewOrigin
 	FOV_VIEW = flFOV
 
 end )
@@ -265,7 +266,7 @@ hook.Add( 'PreRender', 'CalculateRenderablesVisibility', function()
 		return
 	end
 
-	CalculateRenderablesVisibility( VECTOR_VIEW_ORIGIN, ANGLE_VIEW_ORIIGN, FOV_VIEW )
+	CalculateRenderablesVisibility( VECTOR_VIEW_ORIGIN, ANGLE_VIEW_ORIGIN, FOV_VIEW )
 
 end )
 
