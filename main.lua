@@ -1,9 +1,8 @@
 --[[---------------------------------------------------------------------------
 	Predefines
 ---------------------------------------------------------------------------]]
-local _R = debug.getregistry()
-local VECTOR = _R.Vector
-local ENTITY = _R.Entity
+local VECTOR = FindMetaTable( 'Vector' )
+local ENTITY = FindMetaTable( 'Entity' )
 
 --
 --	Meta: Vector
@@ -128,7 +127,7 @@ g_Renderables_Lookup = g_Renderables_Lookup or {}
 --[[---------------------------------------------------------------------------
 	PerformantRender: Visibility Calculations
 ---------------------------------------------------------------------------]]
-local AngleGetForward = _R.Angle.Forward
+local AngleGetForward = FindMetaTable( 'Angle' ).Forward
 
 local MathCos = math.cos
 local DEG2RAD = math.pi / 180
