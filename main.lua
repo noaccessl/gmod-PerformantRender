@@ -1,8 +1,8 @@
 --[[---------------------------------------------------------------------------
 	Predefines
 ---------------------------------------------------------------------------]]
-local VECTOR = FindMetaTable( "Vector" )
-local ENTITY = FindMetaTable( "Entity" )
+local VECTOR = FindMetaTable( 'Vector' )
+local ENTITY = FindMetaTable( 'Entity' )
 
 --
 --	Meta: Vector
@@ -127,7 +127,7 @@ g_Renderables_Lookup = g_Renderables_Lookup or {}
 --[[---------------------------------------------------------------------------
 	PerformantRender: Visibility Calculations
 ---------------------------------------------------------------------------]]
-local AngleGetForward = FindMetaTable( "Angle" ).Forward
+local AngleGetForward = FindMetaTable( 'Angle' ).Forward
 
 local MathCos = math.cos
 local DEG2RAD = math.pi / 180
