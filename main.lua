@@ -1,35 +1,42 @@
 --[[---------------------------------------------------------------------------
-	Predefines
+	Prepare
 ---------------------------------------------------------------------------]]
 local VECTOR = FindMetaTable( 'Vector' )
 local ENTITY = FindMetaTable( 'Entity' )
 
 --
---	Meta: Vector
+-- Vector
 --
 local VectorDistToSqr = VECTOR.DistToSqr
 
 --
---	Meta: Entity
+-- Entity
 --
-local IsValid = ENTITY.IsValid
-local IsDormant = ENTITY.IsDormant
+local IsValid			= ENTITY.IsValid
+local IsDormant			= ENTITY.IsDormant
 
-local IsEFlagSet = ENTITY.IsEFlagSet
+local IsEFlagSet		= ENTITY.IsEFlagSet
 
-local GetPos = ENTITY.GetPos
-local GetModelRadius = ENTITY.GetModelRadius
-local GetRenderBounds = ENTITY.GetRenderBounds
+local GetPos			= ENTITY.GetPos
+local GetRenderBounds	= ENTITY.GetRenderBounds
 
-local SetNoDraw = ENTITY.SetNoDraw
-local GetNoDraw = ENTITY.GetNoDraw
+local SetNoDraw			= ENTITY.SetNoDraw
+local GetNoDraw			= ENTITY.GetNoDraw
 
-local RemoveEFlags = ENTITY.RemoveEFlags
-local AddEFlags = ENTITY.AddEFlags
+local RemoveEFlags		= ENTITY.RemoveEFlags
+local AddEFlags			= ENTITY.AddEFlags
 
 --
---	Globals
+-- Angle
 --
+local AngleGetForward = FindMetaTable( 'Angle' ).Forward
+
+--
+-- Globals
+--
+local MathCos = math.cos
+local DEG2RAD = math.pi / 180
+
 local GetFogDistances = render.GetFogDistances
 local CalculatePixelVisibility = util.PixelVisible
 
@@ -42,17 +49,17 @@ local IsInFOV
 
 do
 
-	local VectorCopy = VECTOR.Set
-	local VectorSub = VECTOR.Sub
-	local VectorNormalize = VECTOR.Normalize
-	local VectorDot = VECTOR.Dot
+	local VectorCopy		= VECTOR.Set
+	local VectorSubtract	= VECTOR.Sub
+	local VectorNormalize	= VECTOR.Normalize
+	local VectorDot			= VECTOR.Dot
 
 	local diff = Vector()
 
 	function IsInFOV( vecViewOrigin, vecViewDirection, vecPoint, flFOVCosine )
 
 		VectorCopy( diff, vecPoint )
-		VectorSub( diff, vecViewOrigin )
+		VectorSubtract( diff, vecViewOrigin )
 		VectorNormalize( diff )
 
 		return VectorDot( vecViewDirection, diff ) > flFOVCosine
@@ -61,6 +68,17 @@ do
 
 end
 
+local function MacroAddCVarChangeCallback( name, callback )
+
+	cvars.AddChangeCallback( name, function( _, _, new )
+		callback( new )
+	end, name )
+
+end
+
+local RegisterPotentialRenderable
+
+
 
 
 
@@ -68,20 +86,24 @@ end
 	PerformantRender
 ---------------------------------------------------------------------------]]
 local PERFRENDER_STATE = CreateClientConVar( 'r_performant_enable', '1', true, false, 'Enables/Disables performant rendering of props, NPCs, SENTs, etc.', 0, 1 ):GetBool()
-local PERFRENDER_DEBUG = CreateConVar( 'r_performant_debug', '0', FCVAR_CHEAT, 'Enables/Disables performant render debugging.', 0, 1 ):GetBool()
+local PERFRENDER_CUTBEYONDFOG = CreateClientConVar( 'r_performant_cutbeyondfog', '1', true, false, 'Should we disable rendering entities that are beyond fog?', 0, 1 ):GetBool()
+local PERFRENDER_DEBUG = CreateClientConVar( 'r_performant_debug', '0', false, false, 'Enables/Disables performant render debugging.', 0, 1 ):GetBool()
 
-cvars.AddChangeCallback( 'r_performant_enable', function( _, _, new )
+MacroAddCVarChangeCallback( 'r_performant_enable', function( new )
 
 	PERFRENDER_STATE = tobool( new )
 
 	if PERFRENDER_STATE then
 
-		local tEnts = ents.GetAll()
-		local RegisterPotentialRenderable = hook.GetTable().OnEntityCreated.PerformantRender
+		local iterate, overtable, startingfrom
 
-		for numIndex = 1, #tEnts do
+		if ents.Iterator then
+			iterate, overtable, startingfrom = ents.Iterator()
+		else
+			iterate, overtable, startingfrom = ipairs( ents.GetAll() )
+		end
 
-			local pEntity = tEnts[numIndex]
+		for numIndex, pEntity in iterate, overtable, startingfrom do
 
 			if IsValid( pEntity ) and not pEntity.m_bRenderable then
 				RegisterPotentialRenderable( pEntity )
@@ -89,49 +111,37 @@ cvars.AddChangeCallback( 'r_performant_enable', function( _, _, new )
 
 		end
 
-		return
+	else
 
-	end
+		for numIndex, pEntity in ipairs( g_Renderables ) do
 
-	local g_Renderables = g_Renderables
-	local numAmount = #g_Renderables
+			if IsValid( pEntity ) then
 
-	if numAmount == 0 then
-		return
-	end
+				SetNoDraw( pEntity, false )
+				RemoveEFlags( pEntity, EFL_NO_THINK_FUNCTION )
 
-	for numIndex = 1, numAmount do
-
-		local pEntity = g_Renderables[numIndex]
-
-		if IsValid( pEntity ) then
-
-			SetNoDraw( pEntity, false )
-			RemoveEFlags( pEntity, EFL_NO_THINK_FUNCTION )
+			end
 
 		end
 
 	end
 
-end, 'state' )
+end )
 
-cvars.AddChangeCallback( 'r_performant_debug', function( _, _, new )
+MacroAddCVarChangeCallback( 'r_performant_cutbeyondfog', function( new )
+	PERFRENDER_CUTBEYONDFOG = tobool( new )
+end )
+
+MacroAddCVarChangeCallback( 'r_performant_debug', function( new )
 	PERFRENDER_DEBUG = tobool( new )
-end, 'state' )
-
+end )
 
 g_Renderables = g_Renderables or {}
 g_Renderables_Lookup = g_Renderables_Lookup or {}
 
-
 --[[---------------------------------------------------------------------------
 	PerformantRender: Visibility Calculations
 ---------------------------------------------------------------------------]]
-local AngleGetForward = FindMetaTable( 'Angle' ).Forward
-
-local MathCos = math.cos
-local DEG2RAD = math.pi / 180
-
 local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flFOV )
 
 	local g_Renderables = g_Renderables
@@ -146,9 +156,11 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flF
 	local vecViewDirection = AngleGetForward( angViewOrigin )
 	local flFOVCosine = MathCos( DEG2RAD * ( flFOV * 0.75 ) )
 
+	local PERFRENDER_CUTBEYONDFOG = PERFRENDER_CUTBEYONDFOG
+
 	for numIndex = 1, numAmount do
 
-		local pEntity = g_Renderables[numIndex]
+		local pEntity = g_Renderables[ numIndex ]
 
 		if not IsValid( pEntity ) then
 
@@ -175,8 +187,10 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flF
 		if not bInDistance and not bInFOV then
 
 			if not IsEFlagSet( pEntity, EFL_NO_THINK_FUNCTION ) then
+
 				SetNoDraw( pEntity, true )
 				AddEFlags( pEntity, EFL_NO_THINK_FUNCTION )
+
 			end
 
 			continue
@@ -187,10 +201,14 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flF
 		local bOutsidePVS = false
 		local bInFog = false
 
-		local _, flFogEnd = GetFogDistances()
+		if PERFRENDER_CUTBEYONDFOG then
 
-		if flFogEnd > 0 then
-			bInFog = flDist > flFogEnd * flFogEnd + flDiagonalSqr
+			local _, flFogEnd = GetFogDistances()
+
+			if flFogEnd > 0 then
+				bInFog = flDist > flFogEnd * flFogEnd + flDiagonalSqr
+			end
+
 		end
 
 		if bInDistance then
@@ -285,7 +303,7 @@ function render.RenderView( tView )
 
 	for numIndex = 1, numAmount do
 
-		local pEntity = g_Renderables[numIndex]
+		local pEntity = g_Renderables[ numIndex ]
 
 		if IsValid( pEntity ) and not IsDormant( pEntity ) and GetNoDraw( pEntity ) then
 			SetNoDraw( pEntity, false )
@@ -296,7 +314,6 @@ function render.RenderView( tView )
 	render.RenderView_Internal( tView )
 
 end
-
 
 --[[---------------------------------------------------------------------------
 	PerformantRender: Setup
@@ -313,7 +330,7 @@ local function CalcDiagonal( pEntity )
 
 end
 
-ENTITY.SetRenderBounds_Internal = ENTITY.SetRenderBounds_Internal or ENTITY.SetRenderBounds
+ENTITY.SetRenderBounds_Internal	  = ENTITY.SetRenderBounds_Internal or ENTITY.SetRenderBounds
 ENTITY.SetRenderBoundsWS_Internal = ENTITY.SetRenderBoundsWS_Internal or ENTITY.SetRenderBoundsWS
 
 function ENTITY:SetRenderBounds( vecMins, vecMaxs, vecAdd )
@@ -336,7 +353,7 @@ function ENTITY:SetRenderBoundsWS( vecMins, vecMaxs, vecAdd )
 
 end
 
-hook.Add( 'OnEntityCreated', 'PerformantRender', function( EntityNew )
+function RegisterPotentialRenderable( EntityNew )
 
 	timer.Simple( 0, function()
 
@@ -344,7 +361,7 @@ hook.Add( 'OnEntityCreated', 'PerformantRender', function( EntityNew )
 			return
 		end
 
-		if not GetModelRadius( EntityNew ) or GetNoDraw( EntityNew ) then
+		if GetNoDraw( EntityNew ) then
 			return
 		end
 
@@ -384,24 +401,27 @@ hook.Add( 'OnEntityCreated', 'PerformantRender', function( EntityNew )
 
 	end )
 
-end )
-
+end
+hook.Add( 'OnEntityCreated', 'PerformantRender', RegisterPotentialRenderable )
 
 --[[---------------------------------------------------------------------------
 	PerformantRender: Debugging
 ---------------------------------------------------------------------------]]
 do
 
-	local colorVisible = Color( 0, 180, 0 )
-	local colorHidden = Color( 255, 50, 0 )
+	local COLOR_VISIBLE = Color( 0, 180, 0 )
+	local COLOR_HIDDEN  = Color( 255, 50, 0 )
 
 	local SetColorMaterial = render.SetColorMaterial
+	local DrawWireframeBox = render.DrawWireframeBox
 
 	local GetAngles = ENTITY.GetAngles
 
-	local DrawWireframeBox = render.DrawWireframeBox
+	local sv_cheats = GetConVar( 'sv_cheats' ):GetBool()
 
-	local sv_cheats = GetConVar( 'sv_cheats' )
+	MacroAddCVarChangeCallback( 'sv_cheats', function( new )
+		sv_cheats = tobool( new )
+	end )
 
 	hook.Add( 'PostDrawTranslucentRenderables', 'DebugRenderablesVisibility', function( _, _, bSky )
 
@@ -409,7 +429,7 @@ do
 			return
 		end
 
-		if not ( PERFRENDER_STATE and PERFRENDER_DEBUG and sv_cheats:GetBool() ) then
+		if not ( PERFRENDER_STATE and PERFRENDER_DEBUG and sv_cheats ) then
 			return
 		end
 
@@ -425,7 +445,7 @@ do
 
 		for numIndex = 1, numAmount do
 
-			local pEntity = g_Renderables[numIndex]
+			local pEntity = g_Renderables[ numIndex ]
 
 			if not IsValid( pEntity ) then
 				continue
@@ -437,7 +457,7 @@ do
 
 			local pEntity_t = g_Renderables_Lookup[ pEntity ]
 
-			if pEntity_t.m_bOutsidePVS == true then
+			if pEntity_t.m_bOutsidePVS then
 				continue
 			end
 
@@ -446,10 +466,10 @@ do
 
 			local vecMins, vecMaxs = GetRenderBounds( pEntity )
 
-			if pEntity_t.m_bVisible == false then
-				DrawWireframeBox( vecOrigin, angOrigin, vecMins, vecMaxs, colorHidden )
+			if pEntity_t.m_bVisible then
+				DrawWireframeBox( vecOrigin, angOrigin, vecMins, vecMaxs, COLOR_VISIBLE )
 			else
-				DrawWireframeBox( vecOrigin, angOrigin, vecMins, vecMaxs, colorVisible )
+				DrawWireframeBox( vecOrigin, angOrigin, vecMins, vecMaxs, COLOR_HIDDEN )
 			end
 
 		end
