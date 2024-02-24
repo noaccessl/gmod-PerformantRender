@@ -77,6 +77,7 @@ local function MacroAddCVarChangeCallback( name, callback )
 end
 
 local RegisterPotentialRenderable
+local RegisterRenderable
 
 
 
@@ -87,6 +88,7 @@ local RegisterPotentialRenderable
 ---------------------------------------------------------------------------]]
 local PERFRENDER_STATE = CreateClientConVar( 'r_performant_enable', '1', true, false, 'Enables/Disables performant rendering of props, NPCs, SENTs, etc.', 0, 1 ):GetBool()
 local PERFRENDER_CUTBEYONDFOG = CreateClientConVar( 'r_performant_cutbeyondfog', '1', true, false, 'Should we disable rendering entities that are beyond fog?', 0, 1 ):GetBool()
+local PERFRENDER_EXCLUDENPCS = CreateClientConVar( 'r_performant_excludenpcs', '0', true, false, 'Should we disable visibility checks for NPCs?', 0, 1 ):GetBool()
 local PERFRENDER_DEBUG = CreateClientConVar( 'r_performant_debug', '0', false, false, 'Enables/Disables performant render debugging.', 0, 1 ):GetBool()
 
 MacroAddCVarChangeCallback( 'r_performant_enable', function( new )
@@ -95,17 +97,17 @@ MacroAddCVarChangeCallback( 'r_performant_enable', function( new )
 
 	if PERFRENDER_STATE then
 
-		local iterate, overtable, startingfrom
+		local iterate, overtable
 
 		if ents.Iterator then
-			iterate, overtable, startingfrom = ents.Iterator()
+			iterate, overtable = ents.Iterator()
 		else
-			iterate, overtable, startingfrom = ipairs( ents.GetAll() )
+			iterate, overtable = ipairs( ents.GetAll() )
 		end
 
-		for numIndex, pEntity in iterate, overtable, startingfrom do
+		for numIndex, pEntity in iterate, overtable, 0 do
 
-			if IsValid( pEntity ) and not pEntity.m_bRenderable then
+			if not pEntity.m_bRenderable then
 				RegisterPotentialRenderable( pEntity )
 			end
 
@@ -130,6 +132,45 @@ end )
 
 MacroAddCVarChangeCallback( 'r_performant_cutbeyondfog', function( new )
 	PERFRENDER_CUTBEYONDFOG = tobool( new )
+end )
+
+MacroAddCVarChangeCallback( 'r_performant_excludenpcs', function( new )
+
+	PERFRENDER_EXCLUDENPCS = tobool( new )
+
+	for num, pNPC in ipairs( ents.GetAll() ) do
+
+		if not pNPC:IsNPC() then
+			continue
+		end
+
+		if PERFRENDER_EXCLUDENPCS then
+
+			SetNoDraw( pNPC, false )
+			pNPC.m_bRenderable = nil
+
+			for numIndex, pEntity in ipairs( g_Renderables ) do
+
+				if pEntity == pNPC then
+
+					SetNoDraw( pNPC, false )
+					pNPC.m_bRenderable = nil
+
+					table.remove( g_Renderables, numIndex )
+					g_Renderables_Lookup[ pNPC ] = nil
+
+					break
+
+				end
+
+			end
+
+		else
+			RegisterRenderable( pNPC )
+		end
+
+	end
+
 end )
 
 MacroAddCVarChangeCallback( 'r_performant_debug', function( new )
@@ -353,11 +394,69 @@ function ENTITY:SetRenderBoundsWS( vecMins, vecMaxs, vecAdd )
 
 end
 
-function RegisterPotentialRenderable( EntityNew )
+function RegisterRenderable( pEntity )
+
+	pEntity.m_bRenderable = true
+
+	g_Renderables_Lookup[ pEntity ] = {
+
+		m_bVisible = true;
+		m_bOutsidePVS = false;
+		m_PixVis = util.GetPixelVisibleHandle()
+
+	}
+
+	CalcDiagonal( pEntity )
+
+	table.insert( g_Renderables, pEntity )
+
+end
+
+function RegisterPotentialRenderable( EntityNew, bForce )
 
 	timer.Simple( 0, function()
 
 		if not IsValid( EntityNew ) then
+			return
+		end
+
+		local strClass = EntityNew:GetClass()
+
+		--
+		-- Compatibility with BSMod KillMoves
+		--
+		if not PERFRENDER_EXCLUDENPCS and strClass == 'ent_km_model' then
+
+			local pTarget = EntityNew:GetOwner()
+
+			if not pTarget.m_bRenderable then
+				return
+			end
+
+			for numIndex, pEntity in ipairs( g_Renderables ) do
+
+				if pEntity == pTarget then
+
+					SetNoDraw( pTarget, true )
+
+					table.remove( g_Renderables, numIndex )
+					g_Renderables_Lookup[ pEntity ] = nil
+
+					break
+
+				end
+
+			end
+
+			return
+
+		end
+
+		if strClass:sub( 6, 9 ) == 'door' then
+			return
+		end
+
+		if PERFRENDER_EXCLUDENPCS and EntityNew:IsNPC() then
 			return
 		end
 
@@ -379,25 +478,7 @@ function RegisterPotentialRenderable( EntityNew )
 			return
 		end
 
-		local strClass = EntityNew:GetClass()
-
-		if strClass:sub( 6, 9 ) == 'door' then
-			return
-		end
-
-		EntityNew.m_bRenderable = true
-
-		g_Renderables_Lookup[ EntityNew ] = {
-
-			m_bVisible = true;
-			m_bOutsidePVS = false;
-			m_PixVis = util.GetPixelVisibleHandle()
-
-		}
-
-		CalcDiagonal( EntityNew )
-
-		table.insert( g_Renderables, EntityNew )
+		RegisterRenderable( EntityNew )
 
 	end )
 
