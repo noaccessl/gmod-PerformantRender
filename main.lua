@@ -1,6 +1,6 @@
---[[---------------------------------------------------------------------------
+--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
 	Prepare
----------------------------------------------------------------------------]]
+–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
 local VECTOR = FindMetaTable( 'Vector' )
 local ENTITY = FindMetaTable( 'Entity' )
 
@@ -83,9 +83,9 @@ local RegisterRenderable
 
 
 
---[[---------------------------------------------------------------------------
+--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
 	PerformantRender
----------------------------------------------------------------------------]]
+–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
 local PERFRENDER_STATE = CreateClientConVar( 'r_performant_enable', '1', true, false, 'Enables/Disables performant rendering of props, NPCs, SENTs, etc.', 0, 1 ):GetBool()
 local PERFRENDER_CUTBEYONDFOG = CreateClientConVar( 'r_performant_cutbeyondfog', '1', true, false, 'Should we disable rendering entities that are beyond fog?', 0, 1 ):GetBool()
 local PERFRENDER_EXCLUDENPCS = CreateClientConVar( 'r_performant_excludenpcs', '0', true, false, 'Should we disable visibility checks for NPCs?', 0, 1 ):GetBool()
@@ -180,9 +180,9 @@ end )
 g_Renderables = g_Renderables or {}
 g_Renderables_Lookup = g_Renderables_Lookup or {}
 
---[[---------------------------------------------------------------------------
+--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
 	PerformantRender: Visibility Calculations
----------------------------------------------------------------------------]]
+–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
 local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flFOV )
 
 	local g_Renderables = g_Renderables
@@ -328,9 +328,9 @@ hook.Add( 'PreRender', 'CalculateRenderablesVisibility', function()
 
 end )
 
---[[---------------------------------------------------------------------------
+--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
 	Compatibility with RT Cameras
----------------------------------------------------------------------------]]
+–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
 render.RenderView_Internal = render.RenderView_Internal or render.RenderView
 
 function render.RenderView( tView )
@@ -356,9 +356,9 @@ function render.RenderView( tView )
 
 end
 
---[[---------------------------------------------------------------------------
+--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
 	PerformantRender: Setup
----------------------------------------------------------------------------]]
+–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
 local function CalcDiagonal( pEntity )
 
 	local vecMins, vecMaxs = GetRenderBounds( pEntity )
@@ -485,9 +485,9 @@ function RegisterPotentialRenderable( EntityNew, bForce )
 end
 hook.Add( 'OnEntityCreated', 'PerformantRender', RegisterPotentialRenderable )
 
---[[---------------------------------------------------------------------------
+--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
 	PerformantRender: Debugging
----------------------------------------------------------------------------]]
+–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
 do
 
 	local COLOR_VISIBLE = Color( 0, 180, 0 )
