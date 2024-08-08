@@ -88,7 +88,6 @@ g_Renderables_Lookup = g_Renderables_Lookup or {}
 
 local PERFRENDER_STATE
 local PERFRENDER_CUTBEYONDFOG
-local PERFRENDER_EXCLUDENPCS
 local PERFRENDER_DEBUG
 
 local RegisterPotentialRenderable
@@ -102,7 +101,6 @@ do
 
 	PERFRENDER_STATE		= CreateClientConVar( 'r_performant_enable', '1', true, false, 'Enables/Disables performant rendering of props, NPCs, SENTs, etc.', 0, 1 ):GetBool()
 	PERFRENDER_CUTBEYONDFOG	= CreateClientConVar( 'r_performant_cutbeyondfog', '1', true, false, 'Should we disable rendering entities that are beyond fog?', 0, 1 ):GetBool()
-	PERFRENDER_EXCLUDENPCS	= CreateClientConVar( 'r_performant_excludenpcs', '0', true, false, 'Should we disable visibility checks for NPCs?', 0, 1 ):GetBool()
 	PERFRENDER_DEBUG		= CreateClientConVar( 'r_performant_debug', '0', false, false, 'Enables/Disables performant render debugging.', 0, 1 ):GetBool()
 
 	MacroAddCVarChangeCallback( 'r_performant_enable', function( new )
@@ -142,45 +140,6 @@ do
 	MacroAddCVarChangeCallback( 'r_performant_cutbeyondfog', function( new )
 
 		PERFRENDER_CUTBEYONDFOG = tobool( new )
-
-	end )
-
-	MacroAddCVarChangeCallback( 'r_performant_excludenpcs', function( new )
-
-		PERFRENDER_EXCLUDENPCS = tobool( new )
-
-		for num, pNPC in ipairs( ents.GetAll() ) do
-
-			if ( not pNPC:IsNPC() ) then
-				continue
-			end
-
-			if ( PERFRENDER_EXCLUDENPCS ) then
-
-				SetNoDraw( pNPC, false )
-				pNPC.m_bRenderable = nil
-
-				--
-				-- Unregister
-				--
-				for numIndex, pEntity in ipairs( g_Renderables ) do
-
-					if ( pEntity == pNPC ) then
-
-						table.remove( g_Renderables, numIndex )
-						g_Renderables_Lookup[ pNPC ] = nil
-
-						break
-
-					end
-
-				end
-
-			else
-				RegisterRenderable( pNPC )
-			end
-
-		end
 
 	end )
 
@@ -269,7 +228,7 @@ function RegisterPotentialRenderable( EntityNew, bForce )
 		--
 		-- Compatibility with BSMod KillMoves
 		--
-		if ( not PERFRENDER_EXCLUDENPCS and strClass == 'ent_km_model' ) then
+		if ( strClass == 'ent_km_model' ) then
 
 			local pTarget = EntityNew:GetOwner()
 
@@ -300,13 +259,6 @@ function RegisterPotentialRenderable( EntityNew, bForce )
 		-- Exclude doors
 		--
 		if ( strClass:sub( 6, 9 ) == 'door' ) then
-			return
-		end
-
-		--
-		-- Exclude NPCs if enabled
-		--
-		if ( PERFRENDER_EXCLUDENPCS and EntityNew:IsNPC() ) then
 			return
 		end
 
@@ -508,6 +460,47 @@ do
 		VECTOR_VIEW_ORIGIN = vecViewOrigin
 		ANGLE_VIEW_ORIGIN = angViewOrigin
 		FOV_VIEW = flFOV
+
+	end )
+
+	--
+	-- Fix for NPCs that stay/become visible after death
+	-- The problem is that the engine internally hides a NPC just after it is killed before removing it in the next tick
+	-- https://github.com/ValveSoftware/source-sdk-2013/blob/master/mp/src/game/server/ai_basenpc.cpp#L577
+	-- https://github.com/ValveSoftware/source-sdk-2013/blob/master/mp/src/game/server/baseentity.cpp#L7089
+	--
+	gameevent.Listen( 'entity_killed' )
+	hook.Add( 'entity_killed', 'FixVisibleDeadNPCs', function( data )
+
+		local pNPC = Entity( data.entindex_killed )
+
+		if ( not pNPC:IsNPC() ) then
+			return
+		end
+
+		--
+		-- Hide again
+		--
+		SetNoDraw( pNPC, false )
+		RemoveEFlags( pNPC, EFL_NO_THINK_FUNCTION )
+
+		--
+		-- Unregister
+		--
+		pNPC.m_bRenderable = nil
+
+		for numIndex, pEntity in ipairs( g_Renderables ) do
+
+			if ( pEntity == pNPC ) then
+
+				table.remove( g_Renderables, numIndex )
+				g_Renderables_Lookup[ pNPC ] = nil
+
+				break
+
+			end
+
+		end
 
 	end )
 
