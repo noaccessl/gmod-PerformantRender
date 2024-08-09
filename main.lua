@@ -18,8 +18,6 @@ local VectorDistToSqr = VECTOR.DistToSqr
 local IsValid			= ENTITY.IsValid
 local IsDormant			= ENTITY.IsDormant
 
-local IsEFlagSet		= ENTITY.IsEFlagSet
-
 local GetPos			= ENTITY.GetPos
 local GetRenderBounds	= ENTITY.GetRenderBounds
 
@@ -167,7 +165,11 @@ local CalculateDiagonal do
 
 		local pEntity_t = g_Renderables_Lookup[ pEntity ]
 
-		pEntity_t.m_flDiagonalSqr = flDiagonalSqr * 1.5625 -- +25%
+		--
+		-- Adding to the diagonal (squared) +15%, otherwise entities will be hidden when only one corner of an entity is visible
+		--
+		pEntity_t.m_flDiagonalSqr = flDiagonalSqr * 1.3225
+
 		pEntity_t.m_flDiagonal = flDiagonalSqr ^ 0.5
 
 	end
@@ -337,27 +339,31 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flF
 		end
 
 		local vecOrigin = GetPos( pEntity )
+
+		--
+		-- Ignore entities outside of FOV. Engine already hides them
+		-- 
+		if ( not IsInFOV( vecViewOrigin, vecViewDirection, vecOrigin, flFOVCosine ) ) then
+			continue
+		end
+
 		local pEntity_t = g_Renderables_Lookup[ pEntity ]
 
 		local flDiagonalSqr = pEntity_t.m_flDiagonalSqr
-		local flDist = VectorDistToSqr( vecViewOrigin, vecOrigin )
-
-		local bInDistance = flDist <= flDiagonalSqr
-		local bInFOV = IsInFOV( vecViewOrigin, vecViewDirection, vecOrigin, flFOVCosine )
+		local flDistSqr = VectorDistToSqr( vecViewOrigin, vecOrigin )
 
 		--
-		-- Hide entities beyond the reach and outside of FOV
+		-- Hide entities beyond fog
 		--
-		if ( not bInDistance and not bInFOV ) then
+		local bInFog = false
 
-			if ( not IsEFlagSet( pEntity, EFL_NO_THINK_FUNCTION ) ) then
+		if ( PERFRENDER_CUTBEYONDFOG ) then
 
-				SetNoDraw( pEntity, true )
-				AddEFlags( pEntity, EFL_NO_THINK_FUNCTION )
+			local _, flFogEnd = GetFogDistances()
 
+			if ( flFogEnd > 0 ) then
+				bInFog = flDistSqr > flFogEnd * flFogEnd + flDiagonalSqr
 			end
-
-			continue
 
 		end
 
@@ -366,25 +372,31 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flF
 		--
 		local bVisible = false
 		local bOutsidePVS = false
-		local bInFog = false
 
-		if ( PERFRENDER_CUTBEYONDFOG ) then
+		if ( bInFog ) then
 
-			local _, flFogEnd = GetFogDistances()
-
-			if ( flFogEnd > 0 ) then
-				bInFog = flDist > flFogEnd * flFogEnd + flDiagonalSqr
-			end
-
-		end
-
-		if ( bInDistance ) then
-			bVisible = true
-		elseif ( bInFog ) then
 			bVisible = false
 			bOutsidePVS = true
-		elseif ( pEntity_t.m_PixVis ) then
-			bVisible = CalculatePixelVisibility( vecOrigin, pEntity_t.m_flDiagonal, pEntity_t.m_PixVis ) > 0
+
+		else
+
+			local bInDistance = flDistSqr <= flDiagonalSqr
+			local flRadius = pEntity_t.m_flDiagonal
+
+			--
+			-- To resolve flickering issue decreasing radius as the local player approaches
+			-- Slightly increases performance loss
+			--
+			if bInDistance then
+				flRadius = ( flRadius - ( flRadius - flDistSqr ^ 0.5 ) )
+			end
+
+			bVisible = CalculatePixelVisibility( vecOrigin, flRadius, pEntity_t.m_PixVis ) > 0
+
+			if ( not bVisible and bInDistance ) then
+				bVisible = true
+			end
+
 		end
 
 		--
