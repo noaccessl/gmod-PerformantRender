@@ -4,42 +4,42 @@
 --
 -- Metatables
 --
-local VECTOR = FindMetaTable( 'Vector' )
 local ENTITY = FindMetaTable( 'Entity' )
+local VECTOR = FindMetaTable( 'Vector' )
 
 --
--- Vector
+-- Metamethods: Entity, Vector, Angle
 --
-local VectorDistToSqr = VECTOR.DistToSqr
-
---
--- Entity
---
-local IsValid			= ENTITY.IsValid
+local IsValidEntity		= ENTITY.IsValid
 local IsDormant			= ENTITY.IsDormant
 
 local GetPos			= ENTITY.GetPos
 local GetRenderBounds	= ENTITY.GetRenderBounds
 
-local SetNoDraw			= ENTITY.SetNoDraw
+local IsCreatedByMap	= ENTITY.CreatedByMap
+
 local GetNoDraw			= ENTITY.GetNoDraw
 
 local RemoveEFlags		= ENTITY.RemoveEFlags
 local AddEFlags			= ENTITY.AddEFlags
 
---
--- Angle
---
+
+local VectorDistToSqr = VECTOR.DistToSqr
+
+
 local AngleGetForward = FindMetaTable( 'Angle' ).Forward
 
 --
--- Globals
+-- Globals, Enums
 --
 local MathCos = math.cos
 local DEG2RAD = math.pi / 180
 
 local GetFogDistances			= render.GetFogDistances
 local CalculatePixelVisibility	= util.PixelVisible
+
+local tremove = table.remove
+
 
 local EFL_NO_THINK_FUNCTION = EFL_NO_THINK_FUNCTION
 
@@ -48,10 +48,14 @@ local EFL_NO_THINK_FUNCTION = EFL_NO_THINK_FUNCTION
 --
 local IsInFOV do
 
+	--
+	-- Metamethods: Vector
+	--
 	local VectorCopy		= VECTOR.Set
 	local VectorSubtract	= VECTOR.Sub
 	local VectorNormalize	= VECTOR.Normalize
 	local VectorDot			= VECTOR.Dot
+
 
 	local diff = Vector()
 
@@ -77,12 +81,38 @@ local function MacroAddCVarChangeCallback( name, callback )
 
 end
 
+local fast_isplayer do
+
+	local getmetatable = getmetatable
+	local PLAYER = FindMetaTable( 'Player' )
+
+	function fast_isplayer( any )
+
+		return getmetatable( any ) == PLAYER
+
+	end
+
+end
+
 
 --[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
 	Performant Render: Initialize
 –––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
-g_Renderables		 = g_Renderables or {}
-g_Renderables_Lookup = g_Renderables_Lookup or {}
+g_Renderables		= g_Renderables or { [0] = 0 }
+g_RenderablesData	= g_RenderablesData or {}
+
+hook.Add( 'EntityRemoved', 'PerformantRender_GC', function( pEntity, bFullUpdate )
+
+	if ( bFullUpdate ) then
+		return
+	end
+
+	g_RenderablesData[pEntity] = nil
+
+end )
+
+local g_Renderables		= g_Renderables
+local g_RenderablesData = g_RenderablesData
 
 local PERFRENDER_STATE
 local PERFRENDER_CUTBEYONDFOG
@@ -90,6 +120,38 @@ local PERFRENDER_DEBUG
 
 local RegisterPotentialRenderable
 local RegisterRenderable
+
+local SetNoDraw do
+
+	--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+		Purpose: Let other addons control visibility when they need to
+
+		Note #1:
+			bForcefully = true	=> Performant Render continues to control visibility
+			not bForcefully		=> Performant Render no longer controls visibility
+	–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
+	ENTITY.Internal_SetNoDraw = ENTITY.Internal_SetNoDraw or ENTITY.SetNoDraw
+	local Internal_SetNoDraw = ENTITY.Internal_SetNoDraw
+
+	function ENTITY:SetNoDraw( bNoDraw, bForcefully )
+
+		if ( g_RenderablesData[self] ) then
+
+			if ( bForcefully ~= true ) then
+				g_RenderablesData[self].m_bSkipThis = true
+			else
+				g_RenderablesData[self].m_bSkipThis = nil
+			end
+
+		end
+
+		Internal_SetNoDraw( self, bNoDraw )
+
+	end
+
+	SetNoDraw = ENTITY.SetNoDraw
+
+end
 
 
 --[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
@@ -112,7 +174,7 @@ do
 			--
 			for numIndex, pEntity in ents.Iterator() do
 
-				if ( not pEntity.m_bRenderable ) then
+				if ( not g_RenderablesData[pEntity] ) then
 					RegisterPotentialRenderable( pEntity )
 				end
 
@@ -120,9 +182,11 @@ do
 
 		else
 
-			for numIndex, pEntity in ipairs( g_Renderables ) do
+			for numIndex = 1, g_Renderables[0] do
 
-				if ( IsValid( pEntity ) ) then
+				local pEntity = g_Renderables[numIndex]
+
+				if ( IsValidEntity( pEntity ) ) then
 
 					SetNoDraw( pEntity, false )
 					RemoveEFlags( pEntity, EFL_NO_THINK_FUNCTION )
@@ -156,42 +220,44 @@ end
 local CalculateDiagonal do
 
 	--
-	-- Used for fast checking whether an entity is within the reach
+	-- Used for fast checking whether the entity is within the reach
 	--
 	function CalculateDiagonal( pEntity )
 
 		local vecMins, vecMaxs = GetRenderBounds( pEntity )
 		local flDiagonalSqr = VectorDistToSqr( vecMins, vecMaxs )
 
-		local pEntity_t = g_Renderables_Lookup[ pEntity ]
+		local Renderable_t = g_RenderablesData[pEntity]
 
-		--
-		-- Adding to the diagonal (squared) +15%, otherwise entities will be hidden when only one corner of an entity is visible
-		--
-		pEntity_t.m_flDiagonalSqr = flDiagonalSqr * 1.3225
+		-- +15% to the squared diagonal, otherwise entities may be hidden when only one corner of an entity is visible
+		Renderable_t.m_flDiagonalSqr = flDiagonalSqr * 1.3225
 
-		pEntity_t.m_flDiagonal = flDiagonalSqr ^ 0.5
+		Renderable_t.m_flDiagonal = flDiagonalSqr ^ 0.5
 
 	end
 
-	ENTITY.SetRenderBounds_Internal	  = ENTITY.SetRenderBounds_Internal or ENTITY.SetRenderBounds
-	ENTITY.SetRenderBoundsWS_Internal = ENTITY.SetRenderBoundsWS_Internal or ENTITY.SetRenderBoundsWS
+
+	ENTITY.Internal_SetRenderBounds = ENTITY.Internal_SetRenderBounds or ENTITY.SetRenderBounds
+	local Internal_SetRenderBounds = ENTITY.Internal_SetRenderBounds
 
 	function ENTITY:SetRenderBounds( vecMins, vecMaxs, vecAdd )
 
-		self:SetRenderBounds_Internal( vecMins, vecMaxs, vecAdd )
+		Internal_SetRenderBounds( self, vecMins, vecMaxs, vecAdd )
 
-		if ( self.m_bRenderable ) then
+		if ( g_RenderablesData[self] ) then
 			CalculateDiagonal( self )
 		end
 
 	end
 
+	ENTITY.Internal_SetRenderBoundsWS = ENTITY.Internal_SetRenderBoundsWS or ENTITY.SetRenderBoundsWS
+	local Internal_SetRenderBoundsWS = ENTITY.Internal_SetRenderBoundsWS
+
 	function ENTITY:SetRenderBoundsWS( vecMins, vecMaxs, vecAdd )
 
-		self:SetRenderBoundsWS_Internal( vecMins, vecMaxs, vecAdd )
+		Internal_SetRenderBoundsWS( self, vecMins, vecMaxs, vecAdd )
 
-		if ( self.m_bRenderable ) then
+		if ( g_RenderablesData[self] ) then
 			CalculateDiagonal( self )
 		end
 
@@ -199,53 +265,80 @@ local CalculateDiagonal do
 
 end
 
+local CreatePixelVisibleHandle = util.GetPixelVisibleHandle
+
 function RegisterRenderable( pEntity )
 
-	pEntity.m_bRenderable = true
-
-	g_Renderables_Lookup[ pEntity ] = {
+	g_RenderablesData[pEntity] = {
 
 		m_bVisible = true;
 		m_bOutsidePVS = false;
-		m_PixVis = util.GetPixelVisibleHandle()
+		m_PixVis = CreatePixelVisibleHandle()
 
 	}
 
 	CalculateDiagonal( pEntity )
 
-	table.insert( g_Renderables, pEntity )
+	local index = g_Renderables[0]
+	index = index + 1
+
+	g_Renderables[index] = pEntity
+	g_Renderables[0] = index
 
 end
 
-function RegisterPotentialRenderable( EntityNew, bForce )
+do
 
-	timer.Simple( 0, function()
+	--
+	-- Metamethods: Entity
+	--
+	local GetClass = ENTITY.GetClass
+	local GetOwner = ENTITY.GetOwner
+	local GetModel = ENTITY.GetModel
 
-		if ( not IsValid( EntityNew ) ) then
+	local IsWeapon	= ENTITY.IsWeapon
+	local IsSolid	= ENTITY.IsSolid
+
+	--
+	-- Globals
+	--
+	local substrof = string.sub
+	local isstring = isstring
+
+	local IsValidModel = util.IsValidModel
+
+
+	function RegisterPotentialRenderable( pEntity )
+
+		if ( not IsValidEntity( pEntity ) ) then
 			return
 		end
 
-		local strClass = EntityNew:GetClass()
+		local strClass = GetClass( pEntity )
 
 		--
-		-- Compatibility with BSMod KillMoves
+		-- Compatibility: BSMod KillMoves
 		--
 		if ( strClass == 'ent_km_model' ) then
 
-			local pTarget = EntityNew:GetOwner()
+			local pTarget = GetOwner( pEntity )
 
-			if ( not pTarget.m_bRenderable ) then
+			if ( not g_RenderablesData[pTarget] ) then
 				return
 			end
 
-			for numIndex, pEntity in ipairs( g_Renderables ) do
+			for numIndex = 1, g_Renderables[0] do
 
-				if ( pEntity == pTarget ) then
+				local pRenderable = g_Renderables[numIndex]
+
+				if ( pRenderable == pTarget ) then
 
 					SetNoDraw( pTarget, true )
 
-					table.remove( g_Renderables, numIndex )
-					g_Renderables_Lookup[ pEntity ] = nil
+					tremove( g_Renderables, numIndex )
+					g_RenderablesData[pTarget] = nil
+
+					g_Renderables[0] = g_Renderables[0] - 1
 
 					break
 
@@ -260,74 +353,87 @@ function RegisterPotentialRenderable( EntityNew, bForce )
 		--
 		-- Exclude doors
 		--
-		if ( strClass:sub( 6, 9 ) == 'door' ) then
+		if ( substrof( strClass, 6, 9 ) == 'door' ) then
 			return
 		end
 
 		--
-		-- Exclude invisible entities (on map load)
+		-- Exclude invisible entities on map load
 		--
-		if ( GetNoDraw( EntityNew ) ) then
+		if ( IsCreatedByMap( pEntity ) and GetNoDraw( pEntity ) ) then
 			return
 		end
 
 		--
 		-- Check whether the model is valid
 		--
-		local strModel = EntityNew:GetModel()
+		local strModel = GetModel( pEntity )
 
 		if ( not isstring( strModel ) ) then
 			return
 		end
 
-		if ( not strModel:StartsWith( 'models' ) or strModel == 'models/error.mdl' ) then
+		if ( not IsValidModel( strModel ) ) then
 			return
 		end
 
 		--
 		-- Exclude players, weapons, non-solid entities
 		--
-		if ( EntityNew:IsPlayer() or EntityNew:IsWeapon() or not EntityNew:IsSolid() ) then
+		if ( fast_isplayer( pEntity ) or IsWeapon( pEntity ) or ( not IsSolid( pEntity ) ) ) then
 			return
 		end
 
-		RegisterRenderable( EntityNew )
+		RegisterRenderable( pEntity )
+
+	end
+
+end
+
+hook.Add( 'OnEntityCreated', 'PerformantRender_Register', function( pEntity )
+
+	timer.Simple( 0, function()
+
+		RegisterPotentialRenderable( pEntity )
 
 	end )
 
-end
-hook.Add( 'OnEntityCreated', 'PerformantRender', RegisterPotentialRenderable )
+end )
 
 
 --[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
 	Performant Render: Visibility Calculations
 –––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
-local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flFOV )
+local function CalculateRenderablesVisibility( vecViewOrigin, angViewAngles, flViewFOV )
 
 	local g_Renderables = g_Renderables
-	local numAmount = #g_Renderables
+	local numAmount = g_Renderables[0]
 
 	if ( numAmount == 0 ) then
 		return
 	end
 
-	local g_Renderables_Lookup = g_Renderables_Lookup
+	local g_RenderablesData = g_RenderablesData
 
-	local vecViewDirection = AngleGetForward( angViewOrigin )
-	local flFOVCosine = MathCos( DEG2RAD * ( flFOV * 0.75 ) )
+	local vecViewDirection = AngleGetForward( angViewAngles )
+	local flFOVCosine = MathCos( DEG2RAD * ( flViewFOV * 0.75 ) )
 
 	local PERFRENDER_CUTBEYONDFOG = PERFRENDER_CUTBEYONDFOG
 
+	::reiterate::
+
 	for numIndex = 1, numAmount do
 
-		local pEntity = g_Renderables[ numIndex ]
+		local pEntity = g_Renderables[numIndex]
 
-		if ( not IsValid( pEntity ) ) then
+		if ( not IsValidEntity( pEntity ) ) then
 
-			table.remove( g_Renderables, numIndex )
-			g_Renderables_Lookup[ pEntity ] = nil
+			tremove( g_Renderables, numIndex )
 
-			break
+			numAmount = numAmount - 1
+			g_Renderables[0] = numAmount
+
+			goto reiterate
 
 		end
 
@@ -341,15 +447,19 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flF
 		local vecOrigin = GetPos( pEntity )
 
 		--
-		-- Ignore entities outside of FOV. Engine already hides them
-		-- 
+		-- Ignore entities outside of FOV as the engine already hides them
+		--
 		if ( not IsInFOV( vecViewOrigin, vecViewDirection, vecOrigin, flFOVCosine ) ) then
 			continue
 		end
 
-		local pEntity_t = g_Renderables_Lookup[ pEntity ]
+		local Renderable_t = g_RenderablesData[pEntity]
 
-		local flDiagonalSqr = pEntity_t.m_flDiagonalSqr
+		if ( Renderable_t.m_bSkipThis ) then
+			continue
+		end
+
+		local flDiagonalSqr = Renderable_t.m_flDiagonalSqr
 		local flDistSqr = VectorDistToSqr( vecViewOrigin, vecOrigin )
 
 		--
@@ -362,7 +472,7 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flF
 			local _, flFogEnd = GetFogDistances()
 
 			if ( flFogEnd > 0 ) then
-				bInFog = flDistSqr > flFogEnd * flFogEnd + flDiagonalSqr
+				bInFog = flDistSqr > ( ( flFogEnd * flFogEnd ) + flDiagonalSqr )
 			end
 
 		end
@@ -381,17 +491,17 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flF
 		else
 
 			local bInDistance = flDistSqr <= flDiagonalSqr
-			local flRadius = pEntity_t.m_flDiagonal
+			local flRadius = Renderable_t.m_flDiagonal
 
 			--
 			-- To resolve flickering issue decreasing radius as the local player approaches
 			-- Slightly increases performance loss
 			--
-			if bInDistance then
+			if ( bInDistance ) then
 				flRadius = ( flRadius - ( flRadius - flDistSqr ^ 0.5 ) )
 			end
 
-			bVisible = CalculatePixelVisibility( vecOrigin, flRadius, pEntity_t.m_PixVis ) > 0
+			bVisible = CalculatePixelVisibility( vecOrigin, flRadius, Renderable_t.m_PixVis ) > 0
 
 			if ( not bVisible and bInDistance ) then
 				bVisible = true
@@ -408,27 +518,24 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewOrigin, flF
 
 			if ( bNoDraw ) then
 
-				SetNoDraw( pEntity, false )
+				SetNoDraw( pEntity, false, true )
 				RemoveEFlags( pEntity, EFL_NO_THINK_FUNCTION )
 
 			end
-
-			pEntity_t.m_bVisible = true
 
 		else
 
 			if ( not bNoDraw ) then
 
-				SetNoDraw( pEntity, true )
+				SetNoDraw( pEntity, true, true )
 				AddEFlags( pEntity, EFL_NO_THINK_FUNCTION )
 
 			end
 
-			pEntity_t.m_bVisible = false
-
 		end
 
-		pEntity_t.m_bOutsidePVS = bOutsidePVS
+		Renderable_t.m_bVisible = bVisible
+		Renderable_t.m_bOutsidePVS = bOutsidePVS
 
 	end
 
@@ -436,13 +543,13 @@ end
 
 do
 
-	local VECTOR_VIEW_ORIGIN
-	local ANGLE_VIEW_ORIGIN
-	local FOV_VIEW
+	local VIEW_ORIGIN
+	local VIEW_ANGLE
+	local VIEW_FOV
 
 	local MySelf = NULL
 
-	hook.Add( 'PreRender', 'CalculateRenderablesVisibility', function()
+	hook.Add( 'PreRender', '!!!!!PerformantRender_Calculations', function()
 
 		if ( not PERFRENDER_STATE ) then
 			return
@@ -455,34 +562,41 @@ do
 			return
 		end
 
-		if ( not VECTOR_VIEW_ORIGIN ) then
+		if ( not VIEW_ORIGIN ) then
 			return
 		end
 
-		CalculateRenderablesVisibility( VECTOR_VIEW_ORIGIN, ANGLE_VIEW_ORIGIN, FOV_VIEW )
+		CalculateRenderablesVisibility( VIEW_ORIGIN, VIEW_ANGLE, VIEW_FOV )
 
 	end )
 
-	hook.Add( 'RenderScene', 'CalculateRenderablesVisibility', function( vecViewOrigin, angViewOrigin, flFOV )
+	hook.Add( 'RenderScene', 'PerformantRender_Calculations', function( vecViewOrigin, angViewAngles, flViewFOV )
 
-		if ( not IsValid( MySelf ) ) then
+		if ( not PERFRENDER_STATE ) then
+			return
+		end
+
+		if ( not IsValidEntity( MySelf ) ) then
 			MySelf = LocalPlayer()
 		end
 
-		VECTOR_VIEW_ORIGIN = vecViewOrigin
-		ANGLE_VIEW_ORIGIN = angViewOrigin
-		FOV_VIEW = flFOV
+		VIEW_ORIGIN = vecViewOrigin
+		VIEW_ANGLE = angViewAngles
+		VIEW_FOV = flViewFOV
 
 	end )
 
-	--
-	-- Fix for NPCs that stay/become visible after death
-	-- The problem is that the engine internally hides a NPC just after it is killed before removing it in the next tick
-	-- https://github.com/ValveSoftware/source-sdk-2013/blob/master/mp/src/game/server/ai_basenpc.cpp#L577
-	-- https://github.com/ValveSoftware/source-sdk-2013/blob/master/mp/src/game/server/baseentity.cpp#L7089
-	--
+
+	--[[
+
+		Fix for NPCs that stay/become visible after death
+		The problem is that the engine internally hides a NPC just after it is killed before removing it in the next tick
+		https://github.com/ValveSoftware/source-sdk-2013/blob/master/mp/src/game/server/ai_basenpc.cpp#L577
+		https://github.com/ValveSoftware/source-sdk-2013/blob/master/mp/src/game/server/baseentity.cpp#L7089
+
+	]]
 	gameevent.Listen( 'entity_killed' )
-	hook.Add( 'entity_killed', 'FixVisibleDeadNPCs', function( data )
+	hook.Add( 'entity_killed', 'PerformantRender_FixVisibleDeadNPCs', function( data )
 
 		local pNPC = Entity( data.entindex_killed )
 
@@ -493,20 +607,22 @@ do
 		--
 		-- Hide again
 		--
-		SetNoDraw( pNPC, false )
+		SetNoDraw( pNPC, true )
 		RemoveEFlags( pNPC, EFL_NO_THINK_FUNCTION )
 
 		--
 		-- Unregister
 		--
-		pNPC.m_bRenderable = nil
+		for numIndex = 1, g_Renderables[0] do
 
-		for numIndex, pEntity in ipairs( g_Renderables ) do
+			local pEntity = g_Renderables[numIndex]
 
 			if ( pEntity == pNPC ) then
 
-				table.remove( g_Renderables, numIndex )
-				g_Renderables_Lookup[ pNPC ] = nil
+				tremove( g_Renderables, numIndex )
+				g_RenderablesData[pNPC] = nil
+
+				g_Renderables[0] = g_Renderables[0] - 1
 
 				break
 
@@ -532,39 +648,40 @@ do
 
 	local GetAngles = ENTITY.GetAngles
 
-	local sv_cheats = GetConVar( 'sv_cheats' ):GetBool()
+	local IS_CHEATS = GetConVar( 'sv_cheats' ):GetBool()
 
 	MacroAddCVarChangeCallback( 'sv_cheats', function( new )
 
-		sv_cheats = tobool( new )
+		IS_CHEATS = tobool( new )
 
 	end )
 
-	hook.Add( 'PostDrawTranslucentRenderables', 'DebugRenderablesVisibility', function( _, _, bSky )
+
+	hook.Add( 'PostDrawTranslucentRenderables', 'PerformantRender_Debug', function( _, _, bSky )
 
 		if ( bSky ) then
 			return
 		end
 
-		if ( not ( PERFRENDER_STATE and PERFRENDER_DEBUG and sv_cheats ) ) then
+		if ( not ( PERFRENDER_STATE and PERFRENDER_DEBUG and IS_CHEATS ) ) then
 			return
 		end
 
 		local g_Renderables = g_Renderables
-		local numAmount = #g_Renderables
+		local numAmount = g_Renderables[0]
 
 		if ( numAmount == 0 ) then
 			return
 		end
 
-		local g_Renderables_Lookup = g_Renderables_Lookup
+		local g_RenderablesData = g_RenderablesData
 		SetColorMaterial()
 
 		for numIndex = 1, numAmount do
 
-			local pEntity = g_Renderables[ numIndex ]
+			local pEntity = g_Renderables[numIndex]
 
-			if ( not IsValid( pEntity ) ) then
+			if ( not IsValidEntity( pEntity ) ) then
 				continue
 			end
 
@@ -572,9 +689,9 @@ do
 				continue
 			end
 
-			local pEntity_t = g_Renderables_Lookup[ pEntity ]
+			local Renderable_t = g_RenderablesData[pEntity]
 
-			if ( pEntity_t.m_bOutsidePVS ) then
+			if ( Renderable_t.m_bOutsidePVS ) then
 				continue
 			end
 
@@ -583,7 +700,7 @@ do
 
 			local vecMins, vecMaxs = GetRenderBounds( pEntity )
 
-			if ( pEntity_t.m_bVisible ) then
+			if ( Renderable_t.m_bVisible ) then
 				DrawWireframeBox( vecOrigin, angOrigin, vecMins, vecMaxs, COLOR_VISIBLE )
 			else
 				DrawWireframeBox( vecOrigin, angOrigin, vecMins, vecMaxs, COLOR_HIDDEN )
@@ -599,30 +716,83 @@ end
 --[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
 	Performant Render: Compatibility
 –––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
-do -- with RT Cameras
+local function ShowRenderablesInFOV( bShow, vecViewOrigin, angViewAngles, flViewFOV )
 
-	render.RenderView_Internal = render.RenderView_Internal or render.RenderView
+	local g_Renderables = g_Renderables
+	local g_RenderablesData = g_RenderablesData
 
-	function render.RenderView( tView )
+	local vecViewDirection = bShow and AngleGetForward( angViewAngles ) or nil
+	local flFOVCosine = bShow and MathCos( DEG2RAD * ( flViewFOV * 0.75 ) ) or nil
 
-		local g_Renderables = g_Renderables
-		local numAmount = #g_Renderables
+	for numIndex = 1, g_Renderables[0] do
 
-		if ( numAmount == 0 ) then
-			return render.RenderView_Internal( tView )
+		local pEntity = g_Renderables[numIndex]
+
+		if ( not IsValidEntity( pEntity ) ) then
+			continue
 		end
 
-		for numIndex = 1, numAmount do
+		if ( IsDormant( pEntity ) ) then
+			continue
+		end
 
-			local pEntity = g_Renderables[ numIndex ]
+		local Renderable_t = g_RenderablesData[pEntity]
+		local bVisible = Renderable_t.m_bVisible
 
-			if ( IsValid( pEntity ) and not IsDormant( pEntity ) and GetNoDraw( pEntity ) ) then
-				SetNoDraw( pEntity, false )
+		if ( not bVisible and not Renderable_t.m_bSkipThis ) then
+
+			if ( bShow ) then
+
+				local vecOrigin = GetPos( pEntity )
+
+				if ( not IsInFOV( vecViewOrigin, vecViewDirection, vecOrigin, flFOVCosine ) ) then
+					continue
+				end
+
+				SetNoDraw( pEntity, false, true )
+				RemoveEFlags( pEntity, EFL_NO_THINK_FUNCTION )
+
+			else
+
+				SetNoDraw( pEntity, true, true )
+				AddEFlags( pEntity, EFL_NO_THINK_FUNCTION )
+
 			end
 
 		end
 
-		render.RenderView_Internal( tView )
+	end
+
+end
+
+do -- with RT Cameras
+
+	render.Internal_RenderView = render.Internal_RenderView or render.RenderView
+	local Internal_RenderView = render.Internal_RenderView
+
+	local GetViewSetup = render.GetViewSetup
+
+	function render.RenderView( ViewData_t )
+
+		if ( PERFRENDER_STATE ) then
+
+			local ViewSetup_t = GetViewSetup()
+
+			local vecViewOrigin	= ViewData_t.origin or ViewSetup_t.origin
+			local angViewAngles	= ViewData_t.angles or ViewSetup_t.angles
+			local flViewFOV		= ViewData_t.fov or ViewSetup_t.fov
+
+			ShowRenderablesInFOV( true, vecViewOrigin, angViewAngles, flViewFOV )
+
+				Internal_RenderView( ViewData_t )
+
+			ShowRenderablesInFOV( false )
+
+			return
+
+		end
+
+		Internal_RenderView( ViewData_t )
 
 	end
 
