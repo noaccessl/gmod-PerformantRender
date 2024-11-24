@@ -10,7 +10,6 @@ local VECTOR = FindMetaTable( 'Vector' )
 --
 -- Metamethods: Entity, Vector, Angle
 --
-local IsValidEntity		= ENTITY.IsValid
 local IsDormant			= ENTITY.IsDormant
 
 local GetPos			= ENTITY.GetPos
@@ -39,7 +38,8 @@ local GetFogDistances			= render.GetFogDistances
 local CalculatePixelVisibility	= util.PixelVisible
 
 local tremove = table.remove
-
+local select = select
+local NULL = NULL
 
 local EFL_NO_THINK_FUNCTION = EFL_NO_THINK_FUNCTION
 
@@ -186,7 +186,7 @@ do
 
 				local pEntity = g_Renderables[numIndex]
 
-				if ( IsValidEntity( pEntity ) ) then
+				if ( pEntity == NULL ) then
 
 					SetNoDraw( pEntity, false )
 					RemoveEFlags( pEntity, EFL_NO_THINK_FUNCTION )
@@ -310,7 +310,7 @@ do
 
 	function RegisterPotentialRenderable( pEntity )
 
-		if ( not IsValidEntity( pEntity ) ) then
+		if ( pEntity ~= NULL ) then
 			return
 		end
 
@@ -426,7 +426,7 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewAngles, flV
 
 		local pEntity = g_Renderables[numIndex]
 
-		if ( not IsValidEntity( pEntity ) ) then
+		if ( pEntity ~= NULL ) then
 
 			tremove( g_Renderables, numIndex )
 
@@ -469,10 +469,10 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewAngles, flV
 
 		if ( PERFRENDER_CUTBEYONDFOG ) then
 
-			local _, flFogEnd = GetFogDistances()
+			local flFogZ = select(3, GetFogDistances())
 
-			if ( flFogEnd > 0 ) then
-				bInFog = flDistSqr > ( ( flFogEnd * flFogEnd ) + flDiagonalSqr )
+			if ( flFogZ > 0 ) then
+				bInFog = flDistSqr > ( ( flFogZ * flFogZ ) + flDiagonalSqr )
 			end
 
 		end
@@ -576,7 +576,7 @@ do
 			return
 		end
 
-		if ( not IsValidEntity( MySelf ) ) then
+		if ( MySelf ~= NULL ) then
 			MySelf = LocalPlayer()
 		end
 
@@ -681,7 +681,7 @@ do
 
 			local pEntity = g_Renderables[numIndex]
 
-			if ( not IsValidEntity( pEntity ) ) then
+			if ( pEntity ~= NULL ) then
 				continue
 			end
 
@@ -728,7 +728,7 @@ local function ShowRenderablesInFOV( bShow, vecViewOrigin, angViewAngles, flView
 
 		local pEntity = g_Renderables[numIndex]
 
-		if ( not IsValidEntity( pEntity ) ) then
+		if ( pEntity ~= NULL ) then
 			continue
 		end
 
