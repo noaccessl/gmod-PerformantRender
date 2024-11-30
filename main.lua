@@ -35,6 +35,8 @@ local AngleGetForward = FindMetaTable( 'Angle' ).Forward
 local MathCos = math.cos
 local DEG2RAD = math.pi / 180
 
+local UTIL_IsPointInCone = util.IsPointInCone
+
 local GetFogDistances			= render.GetFogDistances
 local CalculatePixelVisibility	= util.PixelVisible
 
@@ -46,31 +48,6 @@ local EFL_NO_THINK_FUNCTION = EFL_NO_THINK_FUNCTION
 --
 -- Utilities
 --
-local IsInFOV do
-
-	--
-	-- Metamethods: Vector
-	--
-	local VectorCopy		= VECTOR.Set
-	local VectorSubtract	= VECTOR.Sub
-	local VectorNormalize	= VECTOR.Normalize
-	local VectorDot			= VECTOR.Dot
-
-
-	local diff = Vector()
-
-	function IsInFOV( vecViewOrigin, vecViewDirection, vecPoint, flFOVCosine )
-
-		VectorCopy( diff, vecPoint )
-		VectorSubtract( diff, vecViewOrigin )
-		VectorNormalize( diff )
-
-		return VectorDot( vecViewDirection, diff ) > flFOVCosine
-
-	end
-
-end
-
 local function MacroAddCVarChangeCallback( name, callback )
 
 	cvars.AddChangeCallback( name, function( _, _, new )
@@ -449,7 +426,7 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewAngles, flV
 		--
 		-- Ignore entities outside of FOV as the engine already hides them
 		--
-		if ( not IsInFOV( vecViewOrigin, vecViewDirection, vecOrigin, flFOVCosine ) ) then
+		if ( not UTIL_IsPointInCone( vecOrigin, vecViewOrigin, vecViewDirection, flFOVCosine, 131072 ) ) then
 			continue
 		end
 
@@ -745,7 +722,7 @@ local function ShowRenderablesInFOV( bShow, vecViewOrigin, angViewAngles, flView
 
 				local vecOrigin = GetPos( pEntity )
 
-				if ( not IsInFOV( vecViewOrigin, vecViewDirection, vecOrigin, flFOVCosine ) ) then
+				if ( not UTIL_IsPointInCone( vecOrigin, vecViewOrigin, vecViewDirection, flFOVCosine, 131072 ) ) then
 					continue
 				end
 
