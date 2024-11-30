@@ -1,3 +1,51 @@
+
+if ( SERVER ) then
+
+	util.AddNetworkString( 'env.ShareFogFarZ' )
+
+	local ENV_FOG_FARZ
+	local env_fog_controller
+
+	timer.Create( 'env.ShareFogFarZ', engine.TickInterval() * 8, 0, function()
+
+		if ( not IsValid( env_fog_controller ) ) then
+			env_fog_controller = ents.FindByClass( 'env_fog_controller' )[1]
+		else
+
+			local farz = env_fog_controller:GetInternalVariable( 'farz' )
+
+			if ( farz ~= ENV_FOG_FARZ ) then
+
+				ENV_FOG_FARZ = farz
+
+				net.Start( 'env.ShareFogFarZ' )
+					net.WriteDouble( farz )
+				net.Broadcast()
+
+			end
+
+		end
+
+	end )
+
+	return
+
+end
+
+local ENV_FOG_FARZ = 0
+
+net.Receive( 'env.ShareFogFarZ', function()
+
+	local farz = net.ReadDouble()
+
+	if ( farz > 0 ) then
+		ENV_FOG_FARZ = farz
+	else
+		ENV_FOG_FARZ = 0
+	end
+
+end )
+
 --[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
 	Prepare
 –––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
@@ -381,6 +429,8 @@ end )
 --[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
 	Performant Render: Visibility Calculations
 –––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
+local select = select
+
 local function CalculateRenderablesVisibility( vecViewOrigin, angViewAngles, flViewFOV )
 
 	local g_Renderables = g_Renderables
@@ -395,7 +445,17 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewAngles, flV
 	local vecViewDirection = AngleGetForward( angViewAngles )
 	local flFOVCosine = MathCos( DEG2RAD * ( flViewFOV * 0.75 ) )
 
+	local flFogFarZSqr = ENV_FOG_FARZ * ENV_FOG_FARZ
+
 	local PERFRENDER_CUTBEYONDFOG = PERFRENDER_CUTBEYONDFOG
+	local flFogEndSqr
+
+	if ( PERFRENDER_CUTBEYONDFOG ) then
+
+		flFogEndSqr = select( 2, GetFogDistances() )
+		flFogEndSqr = flFogEndSqr * flFogEndSqr
+
+	end
 
 	::reiterate::
 
@@ -440,18 +500,19 @@ local function CalculateRenderablesVisibility( vecViewOrigin, angViewAngles, flV
 		local flDistSqr = VectorDistToSqr( vecViewOrigin, vecOrigin )
 
 		--
+		-- Ignore entities beyond the fog's Far Z Clip Plane
+		--
+		if ( flFogFarZSqr > 0 and flDistSqr > ( flFogFarZSqr + flDiagonalSqr ) ) then
+			continue
+		end
+
+		--
 		-- Hide entities beyond fog
 		--
 		local bInFog = false
 
-		if ( PERFRENDER_CUTBEYONDFOG ) then
-
-			local _, flFogEnd = GetFogDistances()
-
-			if ( flFogEnd > 0 ) then
-				bInFog = flDistSqr > ( ( flFogEnd * flFogEnd ) + flDiagonalSqr )
-			end
-
+		if ( PERFRENDER_CUTBEYONDFOG and flFogEndSqr > 0 ) then
+			bInFog = flDistSqr > ( flFogEndSqr + flDiagonalSqr )
 		end
 
 		--
