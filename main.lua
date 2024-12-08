@@ -28,6 +28,19 @@ if ( SERVER ) then
 
 	end )
 
+	gameevent.Listen( 'player_activate' )
+	hook.Add( 'player_activate', 'env.ShareFogFarZ', function( data )
+
+		if ( ENV_FOG_FARZ ) then
+
+			net.Start( 'env.ShareFogFarZ' )
+				net.WriteDouble( ENV_FOG_FARZ )
+			net.Send( Player( data.userid ) )
+
+		end
+
+	end )
+
 	return
 
 end
