@@ -59,6 +59,7 @@ net.Receive( 'env.ShareFogFarZ', function()
 
 end )
 
+
 --[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
 	Prepare
 –––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
@@ -171,6 +172,9 @@ local SetNoDraw do
 	ENTITY.Internal_SetNoDraw = ENTITY.Internal_SetNoDraw or ENTITY.SetNoDraw
 	local Internal_SetNoDraw = ENTITY.Internal_SetNoDraw
 
+	local DestroyShadow = ENTITY.DestroyShadow
+	local CreateShadow = ENTITY.CreateShadow
+
 	function ENTITY:SetNoDraw( bNoDraw, bForcefully )
 
 		if ( g_RenderablesData[self] ) then
@@ -184,6 +188,16 @@ local SetNoDraw do
 		end
 
 		Internal_SetNoDraw( self, bNoDraw )
+
+		--
+		-- Restore the shadow
+		--
+		if ( not bNoDraw ) then
+
+			DestroyShadow( self )
+			CreateShadow( self )
+
+		end
 
 	end
 
