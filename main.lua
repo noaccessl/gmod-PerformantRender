@@ -842,7 +842,10 @@ do -- with RT Cameras
 		if ( PERFRENDER_STATE ) then
 
 			local ViewSetup_t = GetViewSetup()
-			if (ViewData_t==nil) then ViewData_t=ViewSetup_t end
+
+			if ( ViewData_t == nil ) then
+				ViewData_t = ViewSetup_t
+			end
 
 			local vecViewOrigin	= ViewData_t.origin or ViewSetup_t.origin
 			local angViewAngles	= ViewData_t.angles or ViewSetup_t.angles
