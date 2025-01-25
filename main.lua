@@ -843,6 +843,10 @@ do -- with RT Cameras
 
 			local ViewSetup_t = GetViewSetup()
 
+			if ( ViewData_t == nil ) then
+				ViewData_t = ViewSetup_t
+			end
+
 			local vecViewOrigin	= ViewData_t.origin or ViewSetup_t.origin
 			local angViewAngles	= ViewData_t.angles or ViewSetup_t.angles
 			local flViewFOV		= ViewData_t.fov or ViewSetup_t.fov
