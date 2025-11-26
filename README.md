@@ -1,4 +1,10 @@
 # gmod-PerformantRender
- Optimizes the render of the entities by disabling their render whenever they aren't seen but in the FOV.
+De-renders objects obstructed yet in FOV & drawn.
 
-[Workshop Page](https://steamcommunity.com/sharedfiles/filedetails/?id=3105962404)
+The primary objective of this system is to disable rendering of such objects before a frame is rendered.
+
+Mostly, into the equation are taken regular props, ragdolls, items, and NPCs.
+
+---
+
+[Get on Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3105962404)

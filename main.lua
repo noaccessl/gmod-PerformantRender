@@ -1,63 +1,37 @@
+--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
 
+	De-renders objects obstructed yet in FOV & drawn.
+
+	Find on GitHub: https://github.com/noaccessl/gmod-PerformantRender
+	Get on Steam Workshop: https://steamcommunity.com/sharedfiles/filedetails/?id=3105962404
+
+–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
+
+
+
+--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+	The serverside part
+–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
 if ( SERVER ) then
 
-	util.AddNetworkString( 'env.ShareFogFarZ' )
+	--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+		Purpose: If 3D Skybox is absent, mark this for the clients
+	–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
+	hook.Add( 'InitPostEntity', 'PerformantRender:Check3DSky', function()
 
-	local ENV_FOG_FARZ
-	local env_fog_controller
+		hook.Remove( 'InitPostEntity', 'PerformantRender:Check3DSky' )
 
-	timer.Create( 'env.ShareFogFarZ', engine.TickInterval() * 8, 0, function()
-
-		if ( not IsValid( env_fog_controller ) ) then
-			env_fog_controller = ents.FindByClass( 'env_fog_controller' )[1]
-		else
-
-			local farz = env_fog_controller:GetInternalVariable( 'farz' )
-
-			if ( farz ~= ENV_FOG_FARZ ) then
-
-				ENV_FOG_FARZ = farz
-
-				net.Start( 'env.ShareFogFarZ' )
-					net.WriteDouble( farz )
-				net.Broadcast()
-
-			end
-
+		if ( #ents.FindByClass( 'sky_camera' ) == 0 ) then
+			SetGlobal2Bool( 'PerformantRender:No3DSky', true )
 		end
 
 	end )
 
-	gameevent.Listen( 'player_activate' )
-	hook.Add( 'player_activate', 'env.ShareFogFarZ', function( data )
-
-		if ( ENV_FOG_FARZ ) then
-
-			net.Start( 'env.ShareFogFarZ' )
-				net.WriteDouble( ENV_FOG_FARZ )
-			net.Send( Player( data.userid ) )
-
-		end
-
-	end )
-
+	-- Return. The next code is clientside.
 	return
 
 end
 
-local ENV_FOG_FARZ = 0
-
-net.Receive( 'env.ShareFogFarZ', function()
-
-	local farz = net.ReadDouble()
-
-	if ( farz > 0 ) then
-		ENV_FOG_FARZ = farz
-	else
-		ENV_FOG_FARZ = 0
-	end
-
-end )
 
 
 --[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
@@ -66,712 +40,669 @@ end )
 --
 -- Metatables
 --
-local ENTITY = FindMetaTable( 'Entity' )
-local VECTOR = FindMetaTable( 'Vector' )
+local CEntity = FindMetaTable( 'Entity' )
+local CVector = FindMetaTable( 'Vector' )
+local CAngle = FindMetaTable( 'Angle' )
 
 --
--- Metamethods: Entity, Vector, Angle
+-- Common Hot Functions
 --
-local IsValidEntity		= ENTITY.IsValid
-local IsDormant			= ENTITY.IsDormant
+local GetRenderBounds = CEntity.GetRenderBounds
 
-local GetPos			= ENTITY.GetPos
-local GetRenderBounds	= ENTITY.GetRenderBounds
+local VectorDistance = CVector.Distance
+local VectorCopy = CVector.Set
 
-local IsCreatedByMap	= ENTITY.CreatedByMap
+local Vector = Vector
 
-local GetNoDraw			= ENTITY.GetNoDraw
+local UTIL_TimerCycle = util.TimerCycle
 
-local RemoveEFlags		= ENTITY.RemoveEFlags
-local AddEFlags			= ENTITY.AddEFlags
+local CurTime = CurTime
 
 
-local VectorDistToSqr = VECTOR.DistToSqr
 
+--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+	(Internal) GetFarZ
+–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
+local function GetFarZ() return render.GetViewSetup().zfar end
 
-local AngleGetForward = FindMetaTable( 'Angle' ).Forward
+--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+	(Internal, Aux) QuickCVarChangeCallback
+–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
+local function QuickCVarChangeCallback( name, valuetype, writefield, fnCallback )
 
---
--- Globals, Enums
---
-local MathCos = math.cos
-local DEG2RAD = math.pi / 180
+	local pfnConverter = _G['to' .. valuetype]
 
-local UTIL_IsPointInCone = util.IsPointInCone
+	cvars.AddChangeCallback( name, function( _, _, value )
 
-local GetFogDistances			= render.GetFogDistances
-local CalculatePixelVisibility	= util.PixelVisible
+		value = pfnConverter( value )
 
-local tremove = table.remove
+		if ( writefield ) then
+			PerformantRender[writefield] = value
+		end
 
+		if ( fnCallback ) then
+			fnCallback( value )
+		end
 
-local EFL_NO_THINK_FUNCTION = EFL_NO_THINK_FUNCTION
-
---
--- Utilities
---
-local function MacroAddCVarChangeCallback( name, callback )
-
-	cvars.AddChangeCallback( name, function( _, _, new )
-
-		callback( new )
-
-	end, name )
+	end, 'PerformantRender' )
 
 end
 
-local fast_isplayer do
+--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+	(Internal) fast_isplayer, fast_isweapon
+–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
+local fast_isplayer, fast_isweapon; do
 
 	local getmetatable = getmetatable
-	local PLAYER = FindMetaTable( 'Player' )
 
-	function fast_isplayer( any )
+	local g_pPlayerMetaTable = FindMetaTable( 'Player' )
+	function fast_isplayer( any ) return getmetatable( any ) == g_pPlayerMetaTable end
 
-		return getmetatable( any ) == PLAYER
+	local g_pWeaponMetaTable = FindMetaTable( 'Weapon' )
+	function fast_isweapon( any ) return getmetatable( any ) == g_pWeaponMetaTable end
 
-	end
+end
+
+--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+	(Internal, Debug) ConMsg
+–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
+local ConMsg; do
+
+	local MsgC = MsgC
+	local Format = string.format
+	local color_white = color_white
+	function ConMsg( str, ... ) MsgC( color_white, Format( str, ... ) ) end
 
 end
 
 
+
 --[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
-	Performant Render: Initialize
+	Setup
 –––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
-g_Renderables		= g_Renderables or { [0] = 0 }
-g_RenderablesData	= g_RenderablesData or {}
+--
+-- ConVars
+--
+local performantrender_enable = CreateConVar( 'performantrender_enable', '1', FCVAR_ARCHIVE, 'Enable Performant Render?', 0, 1 )
 
-hook.Add( 'EntityRemoved', 'PerformantRender_GC', function( pEntity, bFullUpdate )
+local performantrender_debug = CreateConVar( 'performantrender_debug', '0', FCVAR_NONE, 'Enable Performant Render Debug Mode?', 0, 1 )
+local performantrender_debug_spew = CreateConVar( 'performantrender_debug_spew', '0', FCVAR_NONE, 'Output additional info to the console?', 0, 1 )
+local performantrender_debug_boxes = CreateConVar( 'performantrender_debug_boxes', '1', FCVAR_NONE, 'Draw wireframe boxes of renderables? Requires sv_cheats.', 0, 1 )
+local performantrender_debug_squares = CreateConVar( 'performantrender_debug_squares', '0', FCVAR_NONE, 'Draw approximate pixel-visibility-test squares? Requires sv_cheats.', 0, 1 )
 
-	if ( bFullUpdate ) then
-		return
+--
+-- Worktable
+--
+PerformantRender = PerformantRender or {}
+do
+
+	PerformantRender.m_bLocked = false
+	do
+
+		timer.Create( 'PerformantRender:Lock', 0.15, 0, function()
+
+			PerformantRender.m_bLocked = not system.HasFocus()
+
+		end )
+
 	end
 
-	g_RenderablesData[pEntity] = nil
+	PerformantRender.m_bState = performantrender_enable:GetBool()
 
-end )
+	PerformantRender.m_bDebug = performantrender_debug:GetBool()
+	PerformantRender.m_Debug_bSpew = performantrender_debug_spew:GetBool()
+	PerformantRender.m_Debug_bBoxes = performantrender_debug_boxes:GetBool()
+	PerformantRender.m_Debug_bSquares = performantrender_debug_squares:GetBool()
 
-local g_Renderables		= g_Renderables
-local g_RenderablesData = g_RenderablesData
+	PerformantRender.m_bPlayerValid = false
+	PerformantRender.g_pPlayer = PerformantRender.g_pPlayer or LocalPlayer()
+	do
 
-local PERFRENDER_STATE
-local PERFRENDER_CUTBEYONDFOG
-local PERFRENDER_DEBUG
+		local function CreatePlayerDataProxy()
 
-local RegisterPotentialRenderable
-local RegisterRenderable
+			PerformantRender.m_hPlayerData = newproxy()
+			debug.setmetatable( PerformantRender.m_hPlayerData, {
 
-local SetNoDraw do
+				__tostring = function( self ) return Format( 'PerformantRenderPlayerDataProxy: %p', self ) end;
+				__index = CEntity.GetTable( PerformantRender.g_pPlayer )
+
+			} )
+
+		end
+
+		if ( not IsValid( PerformantRender.g_pPlayer ) ) then
+
+			hook.Add( 'InitPostEntity', 'PerformantRender:GetLocalPlayer', function()
+
+				hook.Remove( 'InitPostEntity', 'PerformantRender:GetLocalPlayer' )
+
+				PerformantRender.m_bPlayerValid = true
+				PerformantRender.g_pPlayer = LocalPlayer()
+
+				CreatePlayerDataProxy()
+
+			end )
+
+		else
+
+			PerformantRender.m_bPlayerValid = true
+
+			if ( not PerformantRender.m_hPlayerData ) then
+				CreatePlayerDataProxy()
+			end
+
+		end
+
+	end
+
+	PerformantRender.g_vecViewOrigin = Vector( 0, 0, 0 )
+	PerformantRender.m_vecViewOriginAdd = Vector( 0, 0, 0 )
+
+	PerformantRender.g_vecViewDirection = Vector( 0, 0, 0 )
+
+	PerformantRender.g_flFOVCosine = 0
+
+	PerformantRender.g_flFarZ = GetFarZ()
+	do
+
+		timer.Create( 'PerformantRender:UpdateFarZ', 0.3, 0, function()
+
+			PerformantRender.g_flFarZ = GetFarZ()
+
+		end )
+
+	end
+
+	PerformantRender.g_bRender3DSky = GetConVar( 'r_3dsky' ):GetBool()
+	PerformantRender.g_bNo3DSky = PerformantRender.g_bNo3DSky
+
+	PerformantRender.m_RenderablesList = PerformantRender.m_RenderablesList or { [0] = 0 } -- (bidirectional).
+	PerformantRender.m_RenderablesData = PerformantRender.m_RenderablesData or {}
+
+end
+
+local SKYBOXTEST_DELAY = 0.75
+local SKYBOXTEST_DELAY_PERSONALMUL = 0.075
+
+--
+-- ConVars Change Callbacks
+--
+do
+
+	-- [[ performantrender_enable ]] --
+
+	QuickCVarChangeCallback( 'performantrender_enable', 'bool', 'm_bState', function( bState )
+
+		if ( not bState ) then
+
+			for i, pEntity in ipairs( PerformantRender.m_RenderablesList ) do
+				PerformantRender:Derender( pEntity, false )
+			end
+
+		end
+
+	end )
+
+	-- [[ performantrender_debug ]] --
+
+	QuickCVarChangeCallback( 'performantrender_debug', 'bool', 'm_bDebug' )
+
+	-- [[ performantrender_debug_spew ]] --
+
+	QuickCVarChangeCallback( 'performantrender_debug_spew', 'bool', 'm_Debug_bSpew' )
+
+	-- [[ performantrender_debug_boxes ]] --
+
+	QuickCVarChangeCallback( 'performantrender_debug_boxes', 'bool', 'm_Debug_bBoxes' )
+
+	-- [[ performantrender_debug_squares ]] --
+
+	QuickCVarChangeCallback( 'performantrender_debug_squares', 'bool', 'm_Debug_bSquares' )
+
+	-- [[ r_3dsky ]] --
+
+	QuickCVarChangeCallback( 'r_3dsky', 'bool', 'g_bRender3DSky' )
+
+end
+
+
+
+--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+	Registration
+–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
+do
 
 	--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
-		Purpose: Let other addons control visibility when they need to
-
-		Note #1:
-			bForcefully = true	=> Performant Render continues to control visibility
-			not bForcefully		=> Performant Render no longer controls visibility
+		(Internal) PerformantRender_CalcPixVisSquareSize
 	–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
-	ENTITY.Internal_SetNoDraw = ENTITY.Internal_SetNoDraw or ENTITY.SetNoDraw
-	local Internal_SetNoDraw = ENTITY.Internal_SetNoDraw
+	local function PerformantRender_CalcPixVisSquareSize( pEntity, renderable_t )
 
-	local DestroyShadow = ENTITY.DestroyShadow
-	local CreateShadow = ENTITY.CreateShadow
+		renderable_t = renderable_t or PerformantRender.m_RenderablesData[pEntity]
 
-	function ENTITY:SetNoDraw( bNoDraw, bForcefully )
-
-		if ( g_RenderablesData[self] ) then
-
-			if ( bForcefully ~= true ) then
-				g_RenderablesData[self].m_bSkipThis = true
-			else
-				g_RenderablesData[self].m_bSkipThis = nil
-			end
-
+		if ( not renderable_t ) then
+			return
 		end
-
-		Internal_SetNoDraw( self, bNoDraw )
-
-		--
-		-- Restore the shadow
-		--
-		if ( not bNoDraw ) then
-
-			DestroyShadow( self )
-			CreateShadow( self )
-
-		end
-
-	end
-
-	SetNoDraw = ENTITY.SetNoDraw
-
-end
-
-
---[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
-	Performant Render: Management
-–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
-do
-
-	PERFRENDER_STATE		= CreateClientConVar( 'r_performant_enable', '1', true, false, 'Enables/Disables performant rendering of props, NPCs, SENTs, etc.', 0, 1 ):GetBool()
-	PERFRENDER_CUTBEYONDFOG	= CreateClientConVar( 'r_performant_cutbeyondfog', '1', true, false, 'Should we disable rendering entities that are beyond fog?', 0, 1 ):GetBool()
-	PERFRENDER_DEBUG		= CreateClientConVar( 'r_performant_debug', '0', false, false, 'Enables/Disables performant render debugging.', 0, 1 ):GetBool()
-
-	MacroAddCVarChangeCallback( 'r_performant_enable', function( new )
-
-		PERFRENDER_STATE = tobool( new )
-
-		if ( PERFRENDER_STATE ) then
-
-			--
-			-- In case if we have new unregistered entities
-			--
-			for numIndex, pEntity in ents.Iterator() do
-
-				if ( not g_RenderablesData[pEntity] ) then
-					RegisterPotentialRenderable( pEntity )
-				end
-
-			end
-
-		else
-
-			for numIndex = 1, g_Renderables[0] do
-
-				local pEntity = g_Renderables[numIndex]
-
-				if ( IsValidEntity( pEntity ) ) then
-
-					SetNoDraw( pEntity, false )
-					RemoveEFlags( pEntity, EFL_NO_THINK_FUNCTION )
-
-				end
-
-			end
-
-		end
-
-	end )
-
-	MacroAddCVarChangeCallback( 'r_performant_cutbeyondfog', function( new )
-
-		PERFRENDER_CUTBEYONDFOG = tobool( new )
-
-	end )
-
-	MacroAddCVarChangeCallback( 'r_performant_debug', function( new )
-
-		PERFRENDER_DEBUG = tobool( new )
-
-	end )
-
-end
-
-
---[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
-	Performant Render: Setup entities
-–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
-local CalculateDiagonal do
-
-	--
-	-- Used for fast checking whether the entity is within the reach
-	--
-	function CalculateDiagonal( pEntity )
 
 		local vecMins, vecMaxs = GetRenderBounds( pEntity )
-		local flDiagonalSqr = VectorDistToSqr( vecMins, vecMaxs )
 
-		local Renderable_t = g_RenderablesData[pEntity]
+		local flDiagonal = VectorDistance( vecMins, vecMaxs )
+		renderable_t.m_flPixVisSquareSize = ( flDiagonal * 0.5 ) * 1.33
+		-- +33% bonus of margin to the pixel visiblity square size.
 
-		-- +15% to the squared diagonal, otherwise entities may be hidden when only one corner of an entity is visible
-		Renderable_t.m_flDiagonalSqr = flDiagonalSqr * 1.3225
+		if ( PerformantRender.m_bDebug and PerformantRender.m_Debug_bBoxes ) then
 
-		Renderable_t.m_flDiagonal = flDiagonalSqr ^ 0.5
+			renderable_t.m_Debug_vecMinRenderBound = renderable_t.m_Debug_vecMinRenderBound or Vector( 0, 0, 0 )
+			VectorCopy( renderable_t.m_Debug_vecMinRenderBound, vecMins )
 
-	end
+			renderable_t.m_Debug_vecMaxRenderBound = renderable_t.m_Debug_vecMaxRenderBound or Vector( 0, 0, 0 )
+			VectorCopy( renderable_t.m_Debug_vecMaxRenderBound, vecMaxs )
 
-
-	ENTITY.Internal_SetRenderBounds = ENTITY.Internal_SetRenderBounds or ENTITY.SetRenderBounds
-	local Internal_SetRenderBounds = ENTITY.Internal_SetRenderBounds
-
-	function ENTITY:SetRenderBounds( vecMins, vecMaxs, vecAdd )
-
-		Internal_SetRenderBounds( self, vecMins, vecMaxs, vecAdd )
-
-		if ( g_RenderablesData[self] ) then
-			CalculateDiagonal( self )
 		end
 
 	end
 
-	ENTITY.Internal_SetRenderBoundsWS = ENTITY.Internal_SetRenderBoundsWS or ENTITY.SetRenderBoundsWS
-	local Internal_SetRenderBoundsWS = ENTITY.Internal_SetRenderBoundsWS
+	-- Integrate into Entity:SetRenderBounds & Entity:SetRenderBoundsWS
+	do
 
-	function ENTITY:SetRenderBoundsWS( vecMins, vecMaxs, vecAdd )
+		CEntity.SetRenderBoundsEx = CEntity.SetRenderBoundsEx or CEntity.SetRenderBounds
+		local SetRenderBoundsEx = CEntity.SetRenderBoundsEx
 
-		Internal_SetRenderBoundsWS( self, vecMins, vecMaxs, vecAdd )
+		function CEntity:SetRenderBounds( vecMins, vecMaxs, vecAdd )
 
-		if ( g_RenderablesData[self] ) then
-			CalculateDiagonal( self )
+			SetRenderBoundsEx( self, vecMins, vecMaxs, vecAdd )
+
+			PerformantRender_CalcPixVisSquareSize( self )
+
+		end
+
+		CEntity.SetRenderBoundsWSEx = CEntity.SetRenderBoundsWSEx or CEntity.SetRenderBoundsWS
+		local SetRenderBoundsWSEx = CEntity.SetRenderBoundsWSEx
+
+		function CEntity:SetRenderBoundsWS( vecMins, vecMaxs, vecAdd )
+
+			SetRenderBoundsWSEx( self, vecMins, vecMaxs, vecAdd )
+
+			PerformantRender_CalcPixVisSquareSize( self )
+
 		end
 
 	end
 
+	--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+		(Internal) PerformantRender_NewRenderableDatum
+	–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
+	local UTIL_GetPixelVisibleHandle = util.GetPixelVisibleHandle
+
+	local function PerformantRender_NewRenderableDatum()
+
+		local renderable_t = {
+
+			m_bDerendered;
+
+			m_iLastRenderMode;
+			m_tLastColor = { true; true; true; true };
+
+			m_bDormant;
+
+			m_Save_vecAbsCenter;
+
+			m_bInSkybox;
+			-- Bear in mind, the test is happening against vecViewOrigin.
+			-- So it'll be false if vecViewOrigin is too in the skybox.
+			m_iNextSkyboxTest = 0;
+
+			m_bOutOfFOV;
+
+			m_pPixVisHandle = UTIL_GetPixelVisibleHandle();
+			m_flPixVisSquareSize;
+			m_flVisibility;
+
+			m_bOmitted;
+
+			m_Debug_vecAbsOrigin;
+			m_Debug_angAbsRotation;
+			m_Debug_vecMinRenderBounds;
+			m_Debug_vecMaxRenderBounds;
+			m_Debug_flTotalSquareSize
+
+		}
+
+		return renderable_t
+
+	end
+
+	--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+		RegisterRenderable
+	–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
+	function PerformantRender:RegisterRenderable( pEntity )
+
+		local renderable_t = PerformantRender_NewRenderableDatum()
+
+		PerformantRender_CalcPixVisSquareSize( pEntity, renderable_t )
+
+		local pRenderablesList = self.m_RenderablesList
+
+		local i = pRenderablesList[0] + 1
+		pRenderablesList[i] = pEntity
+		pRenderablesList[pEntity] = i
+		pRenderablesList[0] = i
+
+		self.m_RenderablesData[pEntity] = renderable_t
+
+	end
+
+	--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+		TryPotentialRenderable
+	–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
+	local GetClass = CEntity.GetClass
+	local strfind = string.find
+	local GetNoDraw = CEntity.GetNoDraw
+	local IsScripted = CEntity.IsScripted
+	local GetModel = CEntity.GetModel
+	local UTIL_IsValidModel = util.IsValidModel
+
+	function PerformantRender:TryPotentialRenderable( pEntity )
+
+		-- Exclude players
+		if ( fast_isplayer( pEntity ) ) then return end
+
+		-- Exclude weapons
+		if ( fast_isweapon( pEntity ) ) then return end
+
+		local classname = GetClass( pEntity )
+
+		-- Exclude viewmodels
+		if ( classname == 'viewmodel' ) then return end
+
+		-- Exclude effects
+		if ( classname == 'class CLuaEffect' ) then return end
+
+		-- Exclude clientside props
+		if ( classname == 'class C_PhysPropClientside' ) then return end
+
+		-- Exclude doors
+		if ( strfind( classname, 'door' ) ) then return end
+
+		-- Exclude nodraws
+		if ( GetNoDraw( pEntity ) ) then return end
+
+		-- Let's not mess with SENTs
+		if ( IsScripted( pEntity ) ) then return end
+
+		--
+		-- Model validity check
+		--
+		local mdl = GetModel( pEntity )
+
+		if ( not mdl ) then return end
+		if ( not UTIL_IsValidModel( mdl ) ) then return end
+
+		self:RegisterRenderable( pEntity )
+
+	end
+
+	--
+	-- Integrate
+	--
+	hook.Add( 'OnEntityCreated', 'PerformantRender:TryPotentialRenderable', function( pEntity )
+
+		PerformantRender:TryPotentialRenderable( pEntity )
+
+	end )
+
 end
 
-local CreatePixelVisibleHandle = util.GetPixelVisibleHandle
 
-function RegisterRenderable( pEntity )
 
-	g_RenderablesData[pEntity] = {
-
-		m_bVisible = true;
-		m_bOutsidePVS = false;
-		m_PixVis = CreatePixelVisibleHandle()
-
-	}
-
-	CalculateDiagonal( pEntity )
-
-	local index = g_Renderables[0]
-	index = index + 1
-
-	g_Renderables[index] = pEntity
-	g_Renderables[0] = index
-
-end
-
+--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+	Data, data, data
+–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
 do
 
+	--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+		UpdateLocalData1
+	–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
+	local GetVelocity = CEntity.GetVelocity
+	local VectorMultiply, FrameTime = CVector.Mul, FrameTime
+
+	function PerformantRender:UpdateLocalData1()
+
+		if ( self.m_bLocked ) then return end
+		if ( not self.m_bState ) then return end
+
+		if ( self.m_bPlayerValid ) then
+
+			local vecViewOriginAdd = self.m_vecViewOriginAdd
+
+			VectorCopy( vecViewOriginAdd, GetVelocity( self.g_pPlayer ) )
+			VectorMultiply( vecViewOriginAdd, FrameTime() )
+
+			if ( self.g_bNo3DSky == nil ) then
+				self.g_bNo3DSky = GetGlobal2Bool( 'PerformantRender:No3DSky' )
+			end
+
+		end
+
+	end
+
 	--
-	-- Metamethods: Entity
+	-- Integrate
 	--
-	local GetClass = ENTITY.GetClass
-	local GetOwner = ENTITY.GetOwner
-	local GetModel = ENTITY.GetModel
+	hook.Add( 'Tick', 'PerformantRender:UpdateLocalData1', function()
 
-	local IsWeapon	= ENTITY.IsWeapon
-	local IsSolid	= ENTITY.IsSolid
+		PerformantRender:UpdateLocalData1()
+
+	end )
+
+	--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+		UpdateLocalData2
+	–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
+	local VectorAdd = CVector.Add
+	local AngleForward = CAngle.Forward
+	local cos, rad = math.cos, math.rad
+
+	function PerformantRender:UpdateLocalData2( vecViewOrigin, angViewDirection, flViewFOV )
+
+		if ( self.m_bLocked ) then return end
+		if ( not self.m_bState ) then return end
+
+		VectorAdd( vecViewOrigin, self.m_vecViewOriginAdd ) -- Quick interpolation of sorts
+		VectorCopy( self.g_vecViewOrigin, vecViewOrigin )
+
+		VectorCopy( self.g_vecViewDirection, AngleForward( angViewDirection ) )
+
+		self.g_flFOVCosine = cos( rad( flViewFOV ) )
+
+	end
 
 	--
-	-- Globals
+	-- Integrate
 	--
-	local substrof = string.sub
-	local isstring = isstring
+	hook.Add( 'RenderScene', 'PerformantRender:UpdateLocalData2', function( vecViewOrigin, angViewDirection, flViewFOV )
 
-	local IsValidModel = util.IsValidModel
+		PerformantRender:UpdateLocalData2( vecViewOrigin, angViewDirection, flViewFOV )
 
+	end )
 
-	function RegisterPotentialRenderable( pEntity )
+	--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+		UpdateRenderablesData
+	–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
+	local IsDormant = CEntity.IsDormant
+	local WorldSpaceCenter = CEntity.WorldSpaceCenter
+	local UTIL_TraceLine = util.TraceLine
+	local UTIL_IsPointInCone = util.IsPointInCone
+	local UTIL_PixelVisible = util.PixelVisible
 
-		if ( not IsValidEntity( pEntity ) ) then
+	local GetPos, Angle, AngleCopy, GetAngles = CEntity.GetPos, Angle, CAngle.Set, CEntity.GetAngles
+
+	local g_traceSkyboxTest_t = {}
+	local g_traceSkyboxTest = {
+
+		start = Vector();
+		endpos = Vector();
+
+		filter = { true };
+
+		mask = MASK_SOLID_BRUSHONLY;
+		collisiongroup = COLLISION_GROUP_DEBRIS;
+
+		output = g_traceSkyboxTest_t
+
+	}
+	-- Quite very simple skybox test setup
+
+	local g_traceSkyboxTest_start = g_traceSkyboxTest.start
+	local g_traceSkyboxTest_endpos = g_traceSkyboxTest.endpos
+	local g_traceSkyboxTest_filter = g_traceSkyboxTest.filter
+
+	function PerformantRender:UpdateRenderablesData()
+
+		if ( self.m_bLocked ) then return end
+		if ( not self.m_bState ) then return end
+
+		local bDebug = self.m_bDebug
+		local bDebugSpew = bDebug and self.m_Debug_bSpew
+		local bDebugBoxes = bDebug and self.m_Debug_bBoxes
+		local bDebugSquares = bDebug and self.m_Debug_bSquares
+
+		if ( bDebugSpew ) then UTIL_TimerCycle() end
+
+		local pRenderablesList = self.m_RenderablesList
+		local numRenderables = pRenderablesList[0]
+
+		if ( numRenderables == 0 ) then
 			return
 		end
 
-		local strClass = GetClass( pEntity )
+		local pRenderablesData = self.m_RenderablesData
 
-		--
-		-- Compatibility: BSMod KillMoves
-		--
-		if ( strClass == 'ent_km_model' ) then
+		local bPerformSkyboxTest = self.g_bRender3DSky and not self.g_bNo3DSky
+		local flCurTime
 
-			local pTarget = GetOwner( pEntity )
+		local vecViewOrigin = self.g_vecViewOrigin
 
-			if ( not g_RenderablesData[pTarget] ) then
-				return
+		if ( bPerformSkyboxTest ) then
+
+			flCurTime = CurTime()
+			VectorCopy( g_traceSkyboxTest_endpos, vecViewOrigin )
+
+		end
+
+		local vecViewDirection = self.g_vecViewDirection
+		local flFOVCosine = self.g_flFOVCosine
+
+		local flFarZ = self.g_flFarZ
+
+		for i = 1, numRenderables do
+
+			local pEntity = pRenderablesList[i]
+			local renderable_t = pRenderablesData[pEntity]
+
+			if ( renderable_t.m_bOmitted ) then
+				continue
 			end
 
-			for numIndex = 1, g_Renderables[0] do
+			local bDormant = IsDormant( pEntity )
+			renderable_t.m_bDormant = bDormant
 
-				local pRenderable = g_Renderables[numIndex]
+			if ( bDormant ) then
+				continue
+			end
 
-				if ( pRenderable == pTarget ) then
+			local vecAbsCenter = WorldSpaceCenter( pEntity )
+			renderable_t.m_Save_vecAbsCenter = vecAbsCenter
 
-					SetNoDraw( pTarget, true )
+			local bInSkybox = renderable_t.m_bInSkybox
 
-					tremove( g_Renderables, numIndex )
-					g_RenderablesData[pTarget] = nil
+			if ( bPerformSkyboxTest ) then
 
-					g_Renderables[0] = g_Renderables[0] - 1
+				local iNextSkyboxTest = renderable_t.m_iNextSkyboxTest
 
-					break
+				if ( iNextSkyboxTest < flCurTime ) then
+
+					VectorCopy( g_traceSkyboxTest_start, vecAbsCenter )
+					g_traceSkyboxTest_filter[1] = pEntity
+
+					UTIL_TraceLine( g_traceSkyboxTest )
+
+					bInSkybox = g_traceSkyboxTest_t.HitSky
+					renderable_t.m_bInSkybox = bInSkybox
+
+					renderable_t.m_iNextSkyboxTest = flCurTime + SKYBOXTEST_DELAY + ( i - 1 ) * SKYBOXTEST_DELAY_PERSONALMUL
 
 				end
 
-			end
-
-			return
-
-		end
-
-		--
-		-- Exclude doors
-		--
-		if ( substrof( strClass, 6, 9 ) == 'door' ) then
-			return
-		end
-
-		--
-		-- Exclude invisible entities on map load
-		--
-		if ( IsCreatedByMap( pEntity ) and GetNoDraw( pEntity ) ) then
-			return
-		end
-
-		--
-		-- Check whether the model is valid
-		--
-		local strModel = GetModel( pEntity )
-
-		if ( not isstring( strModel ) ) then
-			return
-		end
-
-		if ( not IsValidModel( strModel ) ) then
-			return
-		end
-
-		--
-		-- Exclude players, weapons, non-solid entities
-		--
-		if ( fast_isplayer( pEntity ) or IsWeapon( pEntity ) or ( not IsSolid( pEntity ) ) ) then
-			return
-		end
-
-		RegisterRenderable( pEntity )
-
-	end
-
-end
-
-hook.Add( 'OnEntityCreated', 'PerformantRender_Register', function( pEntity )
-
-	timer.Simple( 0, function()
-
-		RegisterPotentialRenderable( pEntity )
-
-	end )
-
-end )
-
-
---[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
-	Performant Render: Visibility Calculations
-–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
-local select = select
-
-local function CalculateRenderablesVisibility( vecViewOrigin, angViewAngles, flViewFOV )
-
-	local g_Renderables = g_Renderables
-	local numAmount = g_Renderables[0]
-
-	if ( numAmount == 0 ) then
-		return
-	end
-
-	local g_RenderablesData = g_RenderablesData
-
-	local vecViewDirection = AngleGetForward( angViewAngles )
-	local flFOVCosine = MathCos( DEG2RAD * ( flViewFOV * 0.75 ) )
-
-	local flFogFarZSqr = ENV_FOG_FARZ * ENV_FOG_FARZ
-
-	local PERFRENDER_CUTBEYONDFOG = PERFRENDER_CUTBEYONDFOG
-	local flFogEndSqr
-
-	if ( PERFRENDER_CUTBEYONDFOG ) then
-
-		flFogEndSqr = select( 2, GetFogDistances() )
-		flFogEndSqr = flFogEndSqr * flFogEndSqr
-
-	end
-
-	::reiterate::
-
-	for numIndex = 1, numAmount do
-
-		local pEntity = g_Renderables[numIndex]
-
-		if ( not IsValidEntity( pEntity ) ) then
-
-			tremove( g_Renderables, numIndex )
-
-			numAmount = numAmount - 1
-			g_Renderables[0] = numAmount
-
-			goto reiterate
-
-		end
-
-		--
-		-- Ignore entities outside of PVS
-		--
-		if ( IsDormant( pEntity ) ) then
-			continue
-		end
-
-		local vecOrigin = GetPos( pEntity )
-
-		--
-		-- Ignore entities outside of FOV as the engine already hides them
-		--
-		if ( not UTIL_IsPointInCone( vecOrigin, vecViewOrigin, vecViewDirection, flFOVCosine, 131072 ) ) then
-			continue
-		end
-
-		local Renderable_t = g_RenderablesData[pEntity]
-
-		if ( Renderable_t.m_bSkipThis ) then
-			continue
-		end
-
-		local flDiagonalSqr = Renderable_t.m_flDiagonalSqr
-		local flDistSqr = VectorDistToSqr( vecViewOrigin, vecOrigin )
-
-		--
-		-- Ignore entities beyond the fog's Far Z Clip Plane
-		--
-		if ( flFogFarZSqr > 0 and flDistSqr > ( flFogFarZSqr + flDiagonalSqr ) ) then
-			continue
-		end
-
-		--
-		-- Hide entities beyond fog
-		--
-		local bInFog = false
-
-		if ( PERFRENDER_CUTBEYONDFOG and flFogEndSqr > 0 ) then
-			bInFog = flDistSqr > ( flFogEndSqr + flDiagonalSqr )
-		end
-
-		--
-		-- Determine visibility
-		--
-		local bVisible = false
-		local bOutsidePVS = false
-
-		if ( bInFog ) then
-
-			bVisible = false
-			bOutsidePVS = true
-
-		else
-
-			local bInDistance = flDistSqr <= flDiagonalSqr
-			local flRadius = Renderable_t.m_flDiagonal
-
-			--
-			-- To resolve flickering issue decreasing radius as the local player approaches
-			-- Slightly increases performance loss
-			--
-			if ( bInDistance ) then
-				flRadius = ( flRadius - ( flRadius - flDistSqr ^ 0.5 ) )
-			end
-
-			bVisible = CalculatePixelVisibility( vecOrigin, flRadius, Renderable_t.m_PixVis ) > 0
-
-			if ( not bVisible and bInDistance ) then
-				bVisible = true
-			end
-
-		end
-
-		--
-		-- Manage visibility
-		--
-		local bNoDraw = GetNoDraw( pEntity )
-
-		if ( bVisible ) then
-
-			if ( bNoDraw ) then
-
-				SetNoDraw( pEntity, false, true )
-				RemoveEFlags( pEntity, EFL_NO_THINK_FUNCTION )
-
-			end
-
-		else
-
-			if ( not bNoDraw ) then
-
-				SetNoDraw( pEntity, true, true )
-				AddEFlags( pEntity, EFL_NO_THINK_FUNCTION )
-
-			end
-
-		end
-
-		Renderable_t.m_bVisible = bVisible
-		Renderable_t.m_bOutsidePVS = bOutsidePVS
-
-	end
-
-end
-
-do
-
-	local VIEW_ORIGIN
-	local VIEW_ANGLE
-	local VIEW_FOV
-
-	local MySelf = NULL
-
-	hook.Add( 'PreRender', '!!!!!PerformantRender_Calculations', function()
-
-		if ( not PERFRENDER_STATE ) then
-			return
-		end
-
-		--
-		-- Don't perform calculations while in TARDIS
-		--
-		if ( MySelf.tardis ) then
-			return
-		end
-
-		if ( not VIEW_ORIGIN ) then
-			return
-		end
-
-		CalculateRenderablesVisibility( VIEW_ORIGIN, VIEW_ANGLE, VIEW_FOV )
-
-	end )
-
-	hook.Add( 'RenderScene', 'PerformantRender_Calculations', function( vecViewOrigin, angViewAngles, flViewFOV )
-
-		if ( not PERFRENDER_STATE ) then
-			return
-		end
-
-		if ( not IsValidEntity( MySelf ) ) then
-			MySelf = LocalPlayer()
-		end
-
-		VIEW_ORIGIN = vecViewOrigin
-		VIEW_ANGLE = angViewAngles
-		VIEW_FOV = flViewFOV
-
-	end )
-
-
-	--[[
-
-		Fix for NPCs that stay/become visible after death
-		The problem is that the engine internally hides a NPC just after it is killed before removing it in the next tick
-		https://github.com/ValveSoftware/source-sdk-2013/blob/master/mp/src/game/server/ai_basenpc.cpp#L577
-		https://github.com/ValveSoftware/source-sdk-2013/blob/master/mp/src/game/server/baseentity.cpp#L7089
-
-	]]
-	gameevent.Listen( 'entity_killed' )
-	hook.Add( 'entity_killed', 'PerformantRender_FixVisibleDeadNPCs', function( data )
-
-		local pNPC = Entity( data.entindex_killed )
-
-		if ( not pNPC:IsNPC() ) then
-			return
-		end
-
-		--
-		-- Hide again
-		--
-		SetNoDraw( pNPC, true )
-		RemoveEFlags( pNPC, EFL_NO_THINK_FUNCTION )
-
-		--
-		-- Unregister
-		--
-		for numIndex = 1, g_Renderables[0] do
-
-			local pEntity = g_Renderables[numIndex]
-
-			if ( pEntity == pNPC ) then
-
-				tremove( g_Renderables, numIndex )
-				g_RenderablesData[pNPC] = nil
-
-				g_Renderables[0] = g_Renderables[0] - 1
-
-				break
-
-			end
-
-		end
-
-	end )
-
-end
-
-
---[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
-	Performant Render: Debugging
-–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
-do
-
-	local COLOR_VISIBLE = Color( 0, 180, 0 )
-	local COLOR_HIDDEN  = Color( 255, 50, 0 )
-
-	local SetColorMaterial = render.SetColorMaterial
-	local DrawWireframeBox = render.DrawWireframeBox
-
-	local GetAngles = ENTITY.GetAngles
-
-	local IS_CHEATS = GetConVar( 'sv_cheats' ):GetBool()
-
-	MacroAddCVarChangeCallback( 'sv_cheats', function( new )
-
-		IS_CHEATS = tobool( new )
-
-	end )
-
-
-	hook.Add( 'PostDrawTranslucentRenderables', 'PerformantRender_Debug', function( _, _, bSky )
-
-		if ( bSky ) then
-			return
-		end
-
-		if ( not ( PERFRENDER_STATE and PERFRENDER_DEBUG and IS_CHEATS ) ) then
-			return
-		end
-
-		local g_Renderables = g_Renderables
-		local numAmount = g_Renderables[0]
-
-		if ( numAmount == 0 ) then
-			return
-		end
-
-		local g_RenderablesData = g_RenderablesData
-		SetColorMaterial()
-
-		for numIndex = 1, numAmount do
-
-			local pEntity = g_Renderables[numIndex]
-
-			if ( not IsValidEntity( pEntity ) ) then
-				continue
-			end
-
-			if ( IsDormant( pEntity ) ) then
-				continue
-			end
-
-			local Renderable_t = g_RenderablesData[pEntity]
-
-			if ( Renderable_t.m_bOutsidePVS ) then
-				continue
-			end
-
-			local vecOrigin = GetPos( pEntity )
-			local angOrigin = GetAngles( pEntity )
-
-			local vecMins, vecMaxs = GetRenderBounds( pEntity )
-
-			if ( Renderable_t.m_bVisible ) then
-				DrawWireframeBox( vecOrigin, angOrigin, vecMins, vecMaxs, COLOR_VISIBLE )
 			else
-				DrawWireframeBox( vecOrigin, angOrigin, vecMins, vecMaxs, COLOR_HIDDEN )
+
+				bInSkybox = nil
+				renderable_t.m_bInSkybox = nil
+
+			end
+
+			if ( bInSkybox ) then
+
+				-- Not doing any checks further at this point, leaving stuff to the engine.
+
+				renderable_t.m_flVisibility = 1
+				continue
+
+			end
+
+			local flPixVisSquareSize = renderable_t.m_flPixVisSquareSize
+
+			local bOutOfFOV = not UTIL_IsPointInCone( vecAbsCenter, vecViewOrigin, vecViewDirection, flFOVCosine, flFarZ + flPixVisSquareSize )
+			renderable_t.m_bOutOfFOV = bOutOfFOV
+
+			if ( bOutOfFOV ) then
+				continue
+			end
+
+			local flDistance = VectorDistance( vecViewOrigin, vecAbsCenter )
+			local bWithinReach = flDistance <= flPixVisSquareSize * 1.33
+			-- 33% bonus of margin to the local proximity.
+			-- Yeah, adding to the square size in-place.
+
+			if ( bWithinReach ) then
+				flPixVisSquareSize = flPixVisSquareSize - ( flPixVisSquareSize - flDistance )
+			end
+
+			local pPixVisHandle = renderable_t.m_pPixVisHandle
+			local flVisibility = UTIL_PixelVisible( vecAbsCenter, flPixVisSquareSize, pPixVisHandle )
+
+			if ( bWithinReach and flVisibility == 0 ) then
+				flVisibility = 1
+			end
+
+			renderable_t.m_flVisibility = flVisibility
+
+			if ( bDebugBoxes ) then
+
+				renderable_t.m_Debug_vecAbsOrigin = renderable_t.m_Debug_vecAbsOrigin or Vector( 0, 0, 0 )
+				VectorCopy( renderable_t.m_Debug_vecAbsOrigin, GetPos( pEntity ) )
+
+				renderable_t.m_Debug_angAbsRotation = renderable_t.m_Debug_angAbsRotation or Angle( 0, 0, 0 )
+				AngleCopy( renderable_t.m_Debug_angAbsRotation, GetAngles( pEntity ) )
+
+			end
+
+			if ( bDebugSquares ) then
+				renderable_t.m_Debug_flTotalSquareSize = flPixVisSquareSize
 			end
 
 		end
+
+		if ( bDebugSpew ) then
+			ConMsg( 'PerformantRender:UpdateRenderablesData() took ~%.4f ms\n', UTIL_TimerCycle() )
+		end
+
+	end
+
+	--
+	-- Integrate
+	--
+	hook.Add( 'PostRender', 'PerformantRender:UpdateRenderablesData', function()
+
+		PerformantRender:UpdateRenderablesData()
 
 	end )
 
@@ -779,90 +710,543 @@ end
 
 
 --[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
-	Performant Render: Compatibility
+	De-rendering
 –––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
-local function ShowRenderablesInFOV( bShow, vecViewOrigin, angViewAngles, flViewFOV )
+do
 
-	local g_Renderables = g_Renderables
-	local g_RenderablesData = g_RenderablesData
+	--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+		Derender
+	–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
+	local GetRenderMode = CEntity.GetRenderMode
+	local GetColor4Part = CEntity.GetColor4Part
+	local SetRenderMode = CEntity.SetRenderMode
+	local SetColor4Part = CEntity.SetColor4Part
+	local AddEffects = CEntity.AddEffects
+	local RemoveEffects = CEntity.RemoveEffects
 
-	local vecViewDirection = bShow and AngleGetForward( angViewAngles ) or nil
-	local flFOVCosine = bShow and MathCos( DEG2RAD * ( flViewFOV * 0.75 ) ) or nil
+	local RENDERMODE_NONE = RENDERMODE_NONE
+	local EF_DERENDERED = bit.bor( EF_NOSHADOW, EF_NORECEIVESHADOW, EF_NOFLASHLIGHT )
 
-	for numIndex = 1, g_Renderables[0] do
+	function PerformantRender:Derender( pEntity, bDerender, renderable_t )
 
-		local pEntity = g_Renderables[numIndex]
+		renderable_t = renderable_t or self.m_RenderablesData[pEntity]
 
-		if ( not IsValidEntity( pEntity ) ) then
-			continue
+		if ( bDerender ) then
+
+			if ( not renderable_t.m_bDerendered ) then
+
+				renderable_t.m_iLastRenderMode = GetRenderMode( pEntity )
+
+				local r, g, b, a = GetColor4Part( pEntity )
+
+				local ptLastColor = renderable_t.m_tLastColor
+				ptLastColor[1], ptLastColor[2], ptLastColor[3], ptLastColor[4] = r, g, b, a
+
+				SetRenderMode( pEntity, RENDERMODE_NONE )
+				SetColor4Part( pEntity, 255, 255, 255, 0 )
+				AddEffects( pEntity, EF_DERENDERED )
+
+				renderable_t.m_bDerendered = true
+
+			end
+
+			return
+
 		end
 
-		if ( IsDormant( pEntity ) ) then
-			continue
+		if ( renderable_t.m_bDerendered ) then
+
+			local ptLastColor = renderable_t.m_tLastColor
+
+			SetRenderMode( pEntity, renderable_t.m_iLastRenderMode )
+			SetColor4Part( pEntity, ptLastColor[1], ptLastColor[2], ptLastColor[3], ptLastColor[4] )
+			RemoveEffects( pEntity, EF_DERENDERED )
+
+			renderable_t.m_bDerendered = false
+
 		end
 
-		local Renderable_t = g_RenderablesData[pEntity]
-		local bVisible = Renderable_t.m_bVisible
+	end
 
-		if ( not bVisible and not Renderable_t.m_bSkipThis ) then
+	--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+		PerformDerendering
+	–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
+	function PerformantRender:PerformDerendering()
 
-			if ( bShow ) then
+		if ( self.m_bLocked ) then return end
+		if ( not self.m_bState ) then return end
 
-				local vecOrigin = GetPos( pEntity )
+		-- Don't perform de-rendering while in TARDIS
+		if ( self.m_hPlayerData.tardis ) then
+			return
+		end
 
-				if ( not UTIL_IsPointInCone( vecOrigin, vecViewOrigin, vecViewDirection, flFOVCosine, 131072 ) ) then
+		local bDebugSpew = self.m_bDebug and self.m_Debug_bSpew
+
+		if ( bDebugSpew ) then UTIL_TimerCycle() end
+
+		local pRenderablesList = self.m_RenderablesList
+		local numRenderables = pRenderablesList[0]
+
+		if ( numRenderables == 0 ) then
+			return
+		end
+
+		local pRenderablesData = self.m_RenderablesData
+
+		for i = 1, numRenderables do
+
+			local pEntity = pRenderablesList[i]
+			local renderable_t = pRenderablesData[pEntity]
+
+			if ( renderable_t.m_bOmitted or renderable_t.m_bDormant or renderable_t.m_bOutOfFOV ) then
+				continue
+			end
+
+			self:Derender( pEntity, renderable_t.m_flVisibility == 0, renderable_t )
+
+		end
+
+		if ( bDebugSpew ) then
+			ConMsg( 'PerformantRender:PerformDerendering() took ~%.4f ms\n---\n', UTIL_TimerCycle() )
+		end
+
+	end
+
+	--
+	-- Integrate
+	--
+	hook.Add( 'PreRender', 'PerformantRender:PerformDerendering', function()
+
+		PerformantRender:PerformDerendering()
+
+	end )
+
+end
+
+
+
+--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+	Compatibility: render.RenderView
+–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
+do
+
+	render.RenderViewEx = render.RenderViewEx or render.RenderView
+
+	local PerformantRender = PerformantRender
+	local AngleForward = CAngle.Forward
+	local cos, rad = math.cos, math.rad
+	local UTIL_IsPointInCone = util.IsPointInCone
+	local Derender = PerformantRender.Derender
+
+	local RenderViewEx = render.RenderViewEx
+
+	function render.RenderView( view )
+
+		-- Show renderables for this view
+		do
+
+			if ( PerformantRender.m_bLocked or not PerformantRender.m_bState ) then
+				goto vanilla
+			end
+
+			local pRenderablesList = PerformantRender.m_RenderablesList
+			local numRenderables = pRenderablesList[0]
+
+			if ( numRenderables == 0 ) then
+				goto vanilla
+			end
+
+			local pRenderablesData = PerformantRender.m_RenderablesData
+
+			local vecViewOrigin
+			local vecViewDirection
+			local flFOVCosine
+			local flFarZ
+
+			if ( view ) then
+
+				vecViewOrigin = view.origin
+
+				if ( not vecViewOrigin ) then
+					vecViewOrigin = PerformantRender.g_vecViewOrigin
+				end
+
+				local angViewDirection = view.angles
+
+				if ( angViewDirection ) then
+					vecViewDirection = AngleForward( angViewDirection )
+				else
+					vecViewDirection = PerformantRender.g_vecViewDirection
+				end
+
+				local flFOV = view.fov
+
+				if ( flFOV ) then
+					flFOVCosine = cos( rad( flFOV ) )
+				else
+					flFOVCosine = PerformantRender.g_flFOVCosine
+				end
+
+				flFarZ = view.zfar
+
+				if ( not flFarZ ) then
+					flFarZ = PerformantRender.g_flFarZ
+				end
+
+			else
+
+				vecViewOrigin = PerformantRender.g_vecViewOrigin
+				vecViewDirection = PerformantRender.g_vecViewDirection
+				flFOVCosine = PerformantRender.g_flFOVCosine
+				flFarZ = PerformantRender.g_flFarZ
+
+			end
+
+			for i = 1, numRenderables do
+
+				local pEntity = pRenderablesList[i]
+				local renderable_t = pRenderablesData[pEntity]
+
+				if ( renderable_t.m_bInSkybox ) then
 					continue
 				end
 
-				SetNoDraw( pEntity, false, true )
-				RemoveEFlags( pEntity, EFL_NO_THINK_FUNCTION )
-
-			else
-
-				SetNoDraw( pEntity, true, true )
-				AddEFlags( pEntity, EFL_NO_THINK_FUNCTION )
+				if ( UTIL_IsPointInCone( renderable_t.m_Save_vecAbsCenter, vecViewOrigin, vecViewDirection, flFOVCosine, flFarZ + renderable_t.m_flPixVisSquareSize ) ) then
+					Derender( nil, pEntity, false, renderable_t )
+				end
 
 			end
 
 		end
+
+		::vanilla::
+		RenderViewEx( view )
 
 	end
 
 end
 
-do -- with RT Cameras
+--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+	Compatibility: point_camera
+–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
+do
 
-	render.Internal_RenderView = render.Internal_RenderView or render.RenderView
-	local Internal_RenderView = render.Internal_RenderView
+	local PerformantRender = PerformantRender
 
-	local GetViewSetup = render.GetViewSetup
+	--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+		Storage
+	–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
+	PerformantRender.g_PointCamerasList = PerformantRender.g_PointCamerasList or {}
+	do
 
-	function render.RenderView( ViewData_t )
+		local GetClass = CEntity.GetClass
 
-		if ( PERFRENDER_STATE ) then
+		hook.Add( 'OnEntityCreated', 'PerformantRender:PointCamerasCompat', function( pEntity )
 
-			local ViewSetup_t = GetViewSetup()
-
-			if ( ViewData_t == nil ) then
-				ViewData_t = ViewSetup_t
+			if ( GetClass( pEntity ) == 'point_camera' ) then
+				table.insert( PerformantRender.g_PointCamerasList, pEntity )
 			end
 
-			local vecViewOrigin	= ViewData_t.origin or ViewSetup_t.origin
-			local angViewAngles	= ViewData_t.angles or ViewSetup_t.angles
-			local flViewFOV		= ViewData_t.fov or ViewSetup_t.fov
+		end )
 
-			ShowRenderablesInFOV( true, vecViewOrigin, angViewAngles, flViewFOV )
+		hook.Add( 'EntityRemoved', 'PerformantRender:PointCamerasCompat', function( pEntity, bFullUpdate )
 
-				Internal_RenderView( ViewData_t )
+			if ( bFullUpdate ) then
+				return
+			end
 
-			ShowRenderablesInFOV( false )
+			if ( GetClass( pEntity ) == 'point_camera' ) then
+				table.RemoveByValue( PerformantRender.g_PointCamerasList, pEntity )
+			end
 
+		end )
+
+	end
+
+	--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+		Purpose: Show renderables for point cameras
+	–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
+	local GetInternalVariable = CEntity.GetInternalVariable
+	local IsDormant = CEntity.IsDormant
+	local GetPos = CEntity.GetPos
+	local GetAngles = CEntity.GetAngles
+	local cos, rad = math.cos, math.rad
+	local UTIL_IsPointInCone = util.IsPointInCone
+	local Derender = PerformantRender.Derender
+
+	hook.Add( 'DrawMonitors', 'PerformantRender:PointCamerasCompat', function()
+
+		if ( PerformantRender.m_bLocked or not PerformantRender.m_bState ) then
 			return
+		end
+
+		local pRenderablesList = PerformantRender.m_RenderablesList
+		local numRenderables = pRenderablesList[0]
+
+		if ( numRenderables == 0 ) then
+			return
+		end
+
+		local pRenderablesData = PerformantRender.m_RenderablesData
+
+		local pPointCamerasList = PerformantRender.g_PointCamerasList
+		local numCameras = #pPointCamerasList
+
+		if ( numCameras == 0 ) then
+			return
+		end
+
+		local flFarZ = PerformantRender.g_flFarZ
+
+		for i_camera = 1, numCameras do
+
+			local pPointCamera = pPointCamerasList[i_camera]
+
+			if ( not GetInternalVariable( pPointCamera, 'm_bActive' ) or IsDormant( pPointCamera ) ) then
+				continue
+			end
+
+			local vecViewOrigin = GetPos( pPointCamera )
+			local vecViewDirection = GetAngles( pPointCamera )
+			local flFOVCosine = cos( rad( GetInternalVariable( pPointCamera, 'm_FOV' ) ) )
+
+			for i_renderable = 1, numRenderables do
+
+				local pEntity = pRenderablesList[i_renderable]
+				local renderable_t = pRenderablesData[pEntity]
+
+				if ( renderable_t.m_bInSkybox ) then
+					continue
+				end
+
+				if ( UTIL_IsPointInCone( renderable_t.m_Save_vecAbsCenter, vecViewOrigin, vecViewDirection, flFOVCosine, flFarZ + renderable_t.m_flPixVisSquareSize ) ) then
+					Derender( nil, pEntity, false, renderable_t )
+				end
+
+			end
 
 		end
 
-		Internal_RenderView( ViewData_t )
+	end )
+
+end
+
+
+
+--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+	Garbage Collection
+–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
+do
+
+	--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+		RemoveRenderable
+	–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
+	local pixelvis_handle_gc = FindMetaTable( 'pixelvis_handle_t' ).__gc
+	local next = next
+	local tableremove = table.remove
+
+	function PerformantRender:RemoveRenderable( pEntity )
+
+		local pRenderablesData = self.m_RenderablesData
+		local renderable_t = pRenderablesData[pEntity]
+
+		if ( not renderable_t ) then
+			return
+		end
+
+		-- "Remove" the pixel visibility handle
+		pixelvis_handle_gc( renderable_t.m_pPixVisHandle )
+
+		--
+		-- Empty the datum
+		--
+		local ptLastColor = renderable_t.m_tLastColor
+		ptLastColor[1], ptLastColor[2], ptLastColor[3], ptLastColor[4] = nil
+
+		for k in next, renderable_t do renderable_t[k] = nil end
+
+		-- Remove from the data
+		pRenderablesData[pEntity] = nil
+
+		--
+		-- Remove from the list
+		--
+		local pRenderablesList = self.m_RenderablesList
+
+		local i = pRenderablesList[pEntity]
+
+		tableremove( pRenderablesList, i )
+		pRenderablesList[pEntity] = nil
+
+		local numRenderables = pRenderablesList[0] - 1
+		pRenderablesList[0] = numRenderables
+
+		--
+		-- Update indexes
+		--
+		if ( i < numRenderables ) then
+
+			::update_index::
+
+				pRenderablesList[pRenderablesList[i]] = i
+
+			if ( i ~= numRenderables ) then i = i + 1; goto update_index end
+
+		end
 
 	end
+
+	--
+	-- Integrate
+	--
+	hook.Add( 'EntityRemoved', 'PerformantRender:RemoveRenderable', function( pEntity, bFullUpdate )
+
+		if ( bFullUpdate ) then
+			return
+		end
+
+		PerformantRender:RemoveRenderable( pEntity )
+
+	end )
+
+end
+
+
+
+--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+	Debugging
+–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
+do
+
+	local g_bIsCheats = GetConVar( 'sv_cheats' ):GetBool()
+	QuickCVarChangeCallback( 'sv_cheats', 'bool', nil, function( bIsCheats ) g_bIsCheats = bIsCheats end )
+
+	local COLOR_VISIBLE = Color( 224, 225, 221 )
+	local COLOR_DERENDERED = Color( 13, 27, 42 )
+
+	local MATERIAL_DEBUG = CreateMaterial(
+		'performantrender/debug',
+		'Wireframe_DX9',
+		{
+
+			['$basetexture'] = 'color/white',
+			['$vertexcolor'] = 1;
+			['$ignorez'] = 1;
+
+		}
+	)
+
+	--[[–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+		DrawDebug
+	–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––]]
+	local SetMaterial = render.SetMaterial
+	local DrawWireframeBox = render.DrawWireframeBox
+	local DrawSprite = render.DrawSprite
+
+	function PerformantRender:DrawDebug()
+
+		if ( self.m_bLocked ) then return end
+		if ( not self.m_bState ) then return end
+		if ( not self.m_bDebug ) then return end
+		if ( not g_bIsCheats ) then return end
+
+		local bDebugBoxes = self.m_Debug_bBoxes
+		local bDebugSquares = self.m_Debug_bSquares
+
+		if ( not bDebugBoxes and not bDebugSquares ) then
+			return
+		end
+
+		local pRenderablesList = self.m_RenderablesList
+		local numRenderables = pRenderablesList[0]
+
+		if ( numRenderables == 0 ) then
+			return
+		end
+
+		local pRenderablesData = self.m_RenderablesData
+
+		SetMaterial( MATERIAL_DEBUG )
+
+		for i = 1, numRenderables do
+
+			local pEntity = pRenderablesList[i]
+			local renderable_t = pRenderablesData[pEntity]
+
+			if ( renderable_t.m_bOmitted or renderable_t.m_bDormant or renderable_t.m_bInSkybox or renderable_t.m_bOutOfFOV ) then
+				continue
+			end
+
+			local colState
+
+			local vecAbsOrigin = renderable_t.m_Debug_vecAbsOrigin
+
+			if ( bDebugBoxes and vecAbsOrigin ) then
+
+				colState = renderable_t.m_bDerendered and COLOR_DERENDERED or COLOR_VISIBLE
+
+				local angAbsRotation = renderable_t.m_Debug_angAbsRotation
+
+				local vecMinRenderBound = renderable_t.m_Debug_vecMinRenderBound
+				local vecMaxRenderBound
+
+				-- In case these're missing
+				if ( not vecMinRenderBound ) then
+
+					vecMinRenderBound, vecMaxRenderBound = GetRenderBounds( pEntity )
+					renderable_t.m_Debug_vecMinRenderBound, renderable_t.m_Debug_vecMaxRenderBound = vecMinRenderBound, vecMaxRenderBound
+
+				end
+
+				vecMaxRenderBound = vecMaxRenderBound or renderable_t.m_Debug_vecMaxRenderBound
+
+				DrawWireframeBox(
+					vecAbsOrigin,
+					angAbsRotation,
+					vecMinRenderBound,
+					vecMaxRenderBound,
+					colState
+				)
+
+			end
+
+			local vecAbsCenter = renderable_t.m_Save_vecAbsCenter
+
+			if ( bDebugSquares and vecAbsCenter ) then
+
+				colState = colState or renderable_t.m_bDerendered and COLOR_DERENDERED or COLOR_VISIBLE
+
+				local size = renderable_t.m_Debug_flTotalSquareSize
+
+				if ( size ) then
+
+					DrawSprite(
+						vecAbsCenter,
+						size,
+						size,
+						colState
+					)
+
+				end
+
+			end
+
+		end
+
+	end
+
+	--
+	-- Integrate
+	--
+	hook.Add( 'PostDrawTranslucentRenderables', 'PerformantRender:DrawDebug', function( bDepth, _, b3DSky )
+
+		if ( bDepth or b3DSky ) then
+			return
+		end
+
+		PerformantRender:DrawDebug()
+
+	end )
 
 end
