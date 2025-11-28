@@ -666,8 +666,7 @@ do
 				flPixVisSquareSize = flPixVisSquareSize - ( flPixVisSquareSize - flDistance )
 			end
 
-			local pPixVisHandle = renderable_t.m_pPixVisHandle
-			local flVisibility = UTIL_PixelVisible( vecAbsCenter, flPixVisSquareSize, pPixVisHandle )
+			local flVisibility = UTIL_PixelVisible( vecAbsCenter, flPixVisSquareSize, renderable_t.m_pPixVisHandle )
 
 			if ( bWithinReach and flVisibility == 0 ) then
 				flVisibility = 1
@@ -850,6 +849,14 @@ do
 				goto vanilla
 			end
 
+			if ( not view ) then
+				goto vanilla
+			end
+
+			if ( view and not ( view.origin and view.angles and view.fov ) ) then
+				goto vanilla
+			end
+
 			local pRenderablesList = PerformantRender.m_RenderablesList
 			local numRenderables = pRenderablesList[0]
 
@@ -864,43 +871,32 @@ do
 			local flFOVCosine
 			local flFarZ
 
-			if ( view ) then
+			vecViewOrigin = view.origin
 
-				vecViewOrigin = view.origin
-
-				if ( not vecViewOrigin ) then
-					vecViewOrigin = PerformantRender.g_vecViewOrigin
-				end
-
-				local angViewDirection = view.angles
-
-				if ( angViewDirection ) then
-					vecViewDirection = AngleForward( angViewDirection )
-				else
-					vecViewDirection = PerformantRender.g_vecViewDirection
-				end
-
-				local flFOV = view.fov
-
-				if ( flFOV ) then
-					flFOVCosine = cos( rad( flFOV ) )
-				else
-					flFOVCosine = PerformantRender.g_flFOVCosine
-				end
-
-				flFarZ = view.zfar
-
-				if ( not flFarZ ) then
-					flFarZ = PerformantRender.g_flFarZ
-				end
-
-			else
-
+			if ( not vecViewOrigin ) then
 				vecViewOrigin = PerformantRender.g_vecViewOrigin
-				vecViewDirection = PerformantRender.g_vecViewDirection
-				flFOVCosine = PerformantRender.g_flFOVCosine
-				flFarZ = PerformantRender.g_flFarZ
+			end
 
+			local angViewDirection = view.angles
+
+			if ( angViewDirection ) then
+				vecViewDirection = AngleForward( angViewDirection )
+			else
+				vecViewDirection = PerformantRender.g_vecViewDirection
+			end
+
+			local flFOV = view.fov
+
+			if ( flFOV ) then
+				flFOVCosine = cos( rad( flFOV ) )
+			else
+				flFOVCosine = PerformantRender.g_flFOVCosine
+			end
+
+			flFarZ = view.zfar
+
+			if ( not flFarZ ) then
+				flFarZ = PerformantRender.g_flFarZ
 			end
 
 			for i = 1, numRenderables do
@@ -1066,6 +1062,8 @@ do
 
 		for k in next, renderable_t do renderable_t[k] = nil end
 
+		renderable_t = nil
+
 		-- Remove from the data
 		pRenderablesData[pEntity] = nil
 
@@ -1085,7 +1083,7 @@ do
 		--
 		-- Update indexes
 		--
-		if ( i < numRenderables ) then
+		if ( i <= numRenderables ) then
 
 			::update_index::
 
