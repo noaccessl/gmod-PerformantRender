@@ -908,7 +908,14 @@ do
 					continue
 				end
 
-				if ( UTIL_IsPointInCone( renderable_t.m_Save_vecAbsCenter, vecViewOrigin, vecViewDirection, flFOVCosine, flFarZ + renderable_t.m_flPixVisSquareSize ) ) then
+				local vecAbsCenter = renderable_t.m_Save_vecAbsCenter
+
+				if ( not vecAbsCenter ) then
+					-- Wait for the value
+					continue
+				end
+
+				if ( UTIL_IsPointInCone( vecAbsCenter, vecViewOrigin, vecViewDirection, flFOVCosine, flFarZ + renderable_t.m_flPixVisSquareSize ) ) then
 					Derender( nil, pEntity, false, renderable_t )
 				end
 
@@ -1074,8 +1081,7 @@ do
 
 		local i = pRenderablesList[pEntity]
 
-		tableremove( pRenderablesList, i )
-		pRenderablesList[pEntity] = nil
+		pRenderablesList[tableremove( pRenderablesList, i )] = nil
 
 		local numRenderables = pRenderablesList[0] - 1
 		pRenderablesList[0] = numRenderables
