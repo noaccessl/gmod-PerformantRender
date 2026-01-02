@@ -1104,11 +1104,7 @@ do
 	--
 	-- Integrate
 	--
-	hook.Add( 'EntityRemoved', 'PerformantRender:RemoveRenderable', function( pEntity, bFullUpdate )
-
-		if ( bFullUpdate ) then
-			return
-		end
+	hook.Add( 'EntityRemoved', 'PerformantRender:RemoveRenderable', function( pEntity )
 
 		PerformantRender:RemoveRenderable( pEntity )
 
