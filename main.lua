@@ -141,7 +141,7 @@ do
 
 		timer.Create( 'PerformantRender:Lock', 0.15, 0, function()
 
-			PerformantRender.m_bLocked = not system.HasFocus()
+			PerformantRender.m_bLocked = ( not system.HasFocus() )
 
 		end )
 
@@ -291,11 +291,11 @@ do
 
 		if ( PerformantRender.m_bDebug and PerformantRender.m_Debug_bBoxes ) then
 
-			renderable_t.m_Debug_vecMinRenderBound = renderable_t.m_Debug_vecMinRenderBound or Vector( 0, 0, 0 )
-			VectorCopy( renderable_t.m_Debug_vecMinRenderBound, vecMins )
+			renderable_t.m_Debug_vecRenderBoundsMins = renderable_t.m_Debug_vecRenderBoundsMins or Vector( 0, 0, 0 )
+			VectorCopy( renderable_t.m_Debug_vecRenderBoundsMins, vecMins )
 
-			renderable_t.m_Debug_vecMaxRenderBound = renderable_t.m_Debug_vecMaxRenderBound or Vector( 0, 0, 0 )
-			VectorCopy( renderable_t.m_Debug_vecMaxRenderBound, vecMaxs )
+			renderable_t.m_Debug_vecRenderBoundsMaxs = renderable_t.m_Debug_vecRenderBoundsMaxs or Vector( 0, 0, 0 )
+			VectorCopy( renderable_t.m_Debug_vecRenderBoundsMaxs, vecMaxs )
 
 		end
 
@@ -361,8 +361,8 @@ do
 
 			m_Debug_vecAbsOrigin;
 			m_Debug_angAbsRotation;
-			m_Debug_vecMinRenderBounds;
-			m_Debug_vecMaxRenderBounds;
+			m_Debug_vecRenderBoundsMins;
+			m_Debug_vecRenderBoundsMaxs;
 			m_Debug_flTotalSquareSize
 
 		}
@@ -561,9 +561,9 @@ do
 		if ( not self.m_bState ) then return end
 
 		local bDebug = self.m_bDebug
-		local bDebugSpew = bDebug and self.m_Debug_bSpew
-		local bDebugBoxes = bDebug and self.m_Debug_bBoxes
-		local bDebugSquares = bDebug and self.m_Debug_bSquares
+		local bDebugSpew = ( bDebug and self.m_Debug_bSpew )
+		local bDebugBoxes = ( bDebug and self.m_Debug_bBoxes )
+		local bDebugSquares = ( bDebug and self.m_Debug_bSquares )
 
 		if ( bDebugSpew ) then UTIL_TimerCycle() end
 
@@ -576,7 +576,7 @@ do
 
 		local pRenderablesData = self.m_RenderablesData
 
-		local bPerformSkyboxTest = self.g_bRender3DSky and not self.g_bNo3DSky
+		local bPerformSkyboxTest = ( self.g_bRender3DSky and not self.g_bNo3DSky )
 		local flCurTime
 
 		local vecViewOrigin = self.g_vecViewOrigin
@@ -628,7 +628,7 @@ do
 					bInSkybox = g_traceSkyboxTest_t.HitSky
 					renderable_t.m_bInSkybox = bInSkybox
 
-					renderable_t.m_iNextSkyboxTest = flCurTime + SKYBOXTEST_DELAY + ( i - 1 ) * SKYBOXTEST_DELAY_PERSONALMUL
+					renderable_t.m_iNextSkyboxTest = ( flCurTime + SKYBOXTEST_DELAY + ( i - 1 ) * SKYBOXTEST_DELAY_PERSONALMUL )
 
 				end
 
@@ -650,7 +650,7 @@ do
 
 			local flPixVisSquareSize = renderable_t.m_flPixVisSquareSize
 
-			local bOutOfFOV = not UTIL_IsPointInCone( vecAbsCenter, vecViewOrigin, vecViewDirection, flFOVCosine, flFarZ + flPixVisSquareSize )
+			local bOutOfFOV = ( not UTIL_IsPointInCone( vecAbsCenter, vecViewOrigin, vecViewDirection, flFOVCosine, flFarZ + flPixVisSquareSize ) )
 			renderable_t.m_bOutOfFOV = bOutOfFOV
 
 			if ( bOutOfFOV ) then
@@ -658,12 +658,12 @@ do
 			end
 
 			local flDistance = VectorDistance( vecViewOrigin, vecAbsCenter )
-			local bWithinReach = flDistance <= flPixVisSquareSize * 1.33
+			local bWithinReach = ( flDistance <= flPixVisSquareSize * 1.33 )
 			-- 33% bonus of margin to the local proximity.
-			-- Yeah, adding to the square size in-place.
+			-- Yeah, adding to the square size just in place.
 
 			if ( bWithinReach ) then
-				flPixVisSquareSize = flPixVisSquareSize - ( flPixVisSquareSize - flDistance )
+				flPixVisSquareSize = ( flPixVisSquareSize - ( flPixVisSquareSize - flDistance ) )
 			end
 
 			local flVisibility = UTIL_PixelVisible( vecAbsCenter, flPixVisSquareSize, renderable_t.m_pPixVisHandle )
@@ -780,7 +780,7 @@ do
 			return
 		end
 
-		local bDebugSpew = self.m_bDebug and self.m_Debug_bSpew
+		local bDebugSpew = ( self.m_bDebug and self.m_Debug_bSpew )
 
 		if ( bDebugSpew ) then UTIL_TimerCycle() end
 
@@ -1065,7 +1065,7 @@ do
 		-- Empty the datum
 		--
 		local ptLastColor = renderable_t.m_tLastColor
-		ptLastColor[1], ptLastColor[2], ptLastColor[3], ptLastColor[4] = nil
+		ptLastColor[1], ptLastColor[2], ptLastColor[3], ptLastColor[4], ptLastColor = nil
 
 		for k in next, renderable_t do renderable_t[k] = nil end
 
@@ -1184,28 +1184,28 @@ do
 
 			if ( bDebugBoxes and vecAbsOrigin ) then
 
-				colState = renderable_t.m_bDerendered and COLOR_DERENDERED or COLOR_VISIBLE
+				colState = ( renderable_t.m_bDerendered and COLOR_DERENDERED or COLOR_VISIBLE )
 
 				local angAbsRotation = renderable_t.m_Debug_angAbsRotation
 
-				local vecMinRenderBound = renderable_t.m_Debug_vecMinRenderBound
-				local vecMaxRenderBound
+				local vecRenderBoundsMins = renderable_t.m_Debug_vecRenderBoundsMins
+				local vecRenderBoundsMaxs
 
 				-- In case these're missing
-				if ( not vecMinRenderBound ) then
+				if ( not vecRenderBoundsMins ) then
 
-					vecMinRenderBound, vecMaxRenderBound = GetRenderBounds( pEntity )
-					renderable_t.m_Debug_vecMinRenderBound, renderable_t.m_Debug_vecMaxRenderBound = vecMinRenderBound, vecMaxRenderBound
+					vecRenderBoundsMins, vecRenderBoundsMaxs = GetRenderBounds( pEntity )
+					renderable_t.m_Debug_vecRenderBoundsMins, renderable_t.m_Debug_vecRenderBoundsMaxs = vecRenderBoundsMins, vecRenderBoundsMaxs
 
 				end
 
-				vecMaxRenderBound = vecMaxRenderBound or renderable_t.m_Debug_vecMaxRenderBound
+				vecRenderBoundsMaxs = vecRenderBoundsMaxs or renderable_t.m_Debug_vecRenderBoundsMaxs
 
 				DrawWireframeBox(
 					vecAbsOrigin,
 					angAbsRotation,
-					vecMinRenderBound,
-					vecMaxRenderBound,
+					vecRenderBoundsMins,
+					vecRenderBoundsMaxs,
 					colState
 				)
 
@@ -1215,7 +1215,7 @@ do
 
 			if ( bDebugSquares and vecAbsCenter ) then
 
-				colState = colState or renderable_t.m_bDerendered and COLOR_DERENDERED or COLOR_VISIBLE
+				colState = colState or ( renderable_t.m_bDerendered and COLOR_DERENDERED or COLOR_VISIBLE )
 
 				local size = renderable_t.m_Debug_flTotalSquareSize
 
